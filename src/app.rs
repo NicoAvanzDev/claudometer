@@ -1,29 +1,21 @@
-use std::ptr::null_mut;
-use std::sync::Mutex;
-
-use once_cell::sync::Lazy;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND};
+use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, OpenInputDesktop, SwitchDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_SWITCHDESKTOP,
 };
-use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, LoadCursorW, RegisterClassW, TranslateMessage,
-    EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, HCURSOR, IDC_ARROW, MSG, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WNDCLASSW,
+    DispatchMessageW, GetMessageW, LoadCursorW, RegisterClassW, TranslateMessage, HCURSOR,
+    IDC_ARROW, MSG, WNDCLASSW,
 };
 
 use crate::{drawing, taskbar, usage, widget, winstr};
-
-static WIN_EVENT_HOOKS: Lazy<Mutex<Vec<usize>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 pub fn run() -> windows::core::Result<()> {
     unsafe {
         let module = GetModuleHandleW(None)?;
         let instance = HINSTANCE(module.0);
-        let class_name = winstr::wide("MetricsTaskbarOverlay");
+        let class_name = winstr::wide("ClaudometerOverlay");
 
         let wc = WNDCLASSW {
             hInstance: instance,
@@ -44,9 +36,6 @@ pub fn run() -> windows::core::Result<()> {
             return Err(windows::core::Error::from_win32());
         }
 
-        install_win_event_hook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND);
-        install_win_event_hook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS);
-
         usage::start_fetch_if_due(true);
 
         let mut msg = MSG::default();
@@ -60,35 +49,8 @@ pub fn run() -> windows::core::Result<()> {
 }
 
 pub fn shutdown() {
-    for hook in WIN_EVENT_HOOKS
-        .lock()
-        .expect("hook mutex poisoned")
-        .drain(..)
-    {
-        unsafe {
-            let _ = UnhookWinEvent(HWINEVENTHOOK(hook as *mut _));
-        }
-    }
     usage::shutdown();
     drawing::shutdown();
-}
-
-unsafe fn install_win_event_hook(event_min: u32, event_max: u32) {
-    let hook = SetWinEventHook(
-        event_min,
-        event_max,
-        None,
-        Some(win_event_proc),
-        0,
-        0,
-        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-    );
-    if !hook.0.is_null() {
-        WIN_EVENT_HOOKS
-            .lock()
-            .expect("hook mutex poisoned")
-            .push(hook.0 as usize);
-    }
 }
 
 pub fn is_workstation_locked() -> bool {
@@ -101,20 +63,5 @@ pub fn is_workstation_locked() -> bool {
         let switchable = SwitchDesktop(desktop).is_ok();
         let _ = CloseDesktop(desktop);
         !switchable
-    }
-}
-
-unsafe extern "system" fn win_event_proc(
-    _: HWINEVENTHOOK,
-    _: u32,
-    hwnd: HWND,
-    _: i32,
-    _: i32,
-    _: u32,
-    _: u32,
-) {
-    if hwnd.0 != null_mut() && !widget::is_widget(hwnd) {
-        widget::restore_above_taskbars();
-        widget::schedule_deferred_restacks();
     }
 }
