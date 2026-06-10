@@ -42,7 +42,7 @@ pub fn create_for_taskbar(taskbar: HWND, class_name: PCWSTR, instance: HINSTANCE
     });
     let widget_ptr = Box::into_raw(widget);
 
-    let title = winstr::wide("Claude Code Usage");
+    let title = winstr::wide("Claudometer");
     // Created as a child of the taskbar itself: the widget shares the
     // taskbar's z-order, so the shell raising the taskbar can never cover it.
     let hwnd = unsafe {

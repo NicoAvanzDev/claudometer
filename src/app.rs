@@ -15,7 +15,7 @@ pub fn run() -> windows::core::Result<()> {
     unsafe {
         let module = GetModuleHandleW(None)?;
         let instance = HINSTANCE(module.0);
-        let class_name = winstr::wide("MetricsTaskbarOverlay");
+        let class_name = winstr::wide("ClaudometerOverlay");
 
         let wc = WNDCLASSW {
             hInstance: instance,
