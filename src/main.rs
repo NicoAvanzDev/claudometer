@@ -22,5 +22,5 @@ fn main() -> windows::core::Result<()> {
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
-    eprintln!("CCTaskBarUsage is a native Windows taskbar overlay.");
+    eprintln!("Claudometer is a native Windows taskbar overlay.");
 }

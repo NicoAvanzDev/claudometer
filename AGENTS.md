@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This repository contains `CCTaskBarUsage`, a native Windows Rust taskbar overlay that displays Claude Code usage information. The Cargo package is defined in `Cargo.toml`, with the Windows app split across focused modules under `src/`.
+This repository contains `Claudometer`, a native Windows Rust taskbar overlay that displays Claude Code usage information. The Cargo package is defined in `Cargo.toml`, with the Windows app split across focused modules under `src/`.
 
 ## Development Notes
 
