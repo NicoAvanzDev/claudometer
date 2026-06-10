@@ -1,5 +1,7 @@
 #include "resource.h"
 
+1 24 "app.manifest"
+
 IDI_APP        ICON "../assets/CCTaskBarUsage.ico"
 IDI_SMALL      ICON "../assets/small.ico"
 IDI_CLAUDECODE ICON "../assets/claudecode.ico"

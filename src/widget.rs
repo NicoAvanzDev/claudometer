@@ -10,20 +10,17 @@ use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetWindowLongPtrW, GetWindowRect, IsWindow, KillTimer,
-    PostQuitMessage, SetTimer, SetWindowLongPtrW, SetWindowPos, CREATESTRUCTW, GWLP_USERDATA,
-    HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SWP_SHOWWINDOW, WINDOW_EX_STYLE,
-    WM_DESTROY, WM_NCCREATE, WM_PAINT, WM_TIMER, WM_WTSSESSION_CHANGE, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WTS_SESSION_UNLOCK,
+    CreateWindowExW, DefWindowProcW, GetClientRect, GetWindowLongPtrW, KillTimer, PostQuitMessage,
+    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, CREATESTRUCTW,
+    GWLP_USERDATA, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    WINDOW_EX_STYLE,
+    WM_DESTROY, WM_NCCREATE, WM_PAINT, WM_TIMER, WM_WTSSESSION_CHANGE, WS_CHILD, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WTS_SESSION_UNLOCK,
 };
 
 use crate::{drawing, usage, winstr};
 
 pub const TIMER_ID: usize = 1;
-const RESTACK_TIMER_FAST_ID: usize = 2;
-const RESTACK_TIMER_SLOW_ID: usize = 3;
-const RESTACK_FAST_INTERVAL_MS: u32 = 80;
-const RESTACK_SLOW_INTERVAL_MS: u32 = 350;
 pub const WM_USAGE_UPDATED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 pub const WIDGET_WIDTH: i32 = 164;
 pub const WIDGET_HEIGHT: i32 = 36;
@@ -46,17 +43,19 @@ pub fn create_for_taskbar(taskbar: HWND, class_name: PCWSTR, instance: HINSTANCE
     let widget_ptr = Box::into_raw(widget);
 
     let title = winstr::wide("Claude Code Usage");
+    // Created as a child of the taskbar itself: the widget shares the
+    // taskbar's z-order, so the shell raising the taskbar can never cover it.
     let hwnd = unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE(WS_EX_TOPMOST.0 | WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0),
+            WINDOW_EX_STYLE(WS_EX_NOACTIVATE.0),
             class_name,
             winstr::pcwstr(&title),
-            WS_POPUP,
+            WS_CHILD,
             0,
             0,
             WIDGET_WIDTH,
             WIDGET_HEIGHT,
-            None,
+            taskbar,
             None,
             instance,
             Some(widget_ptr.cast()),
@@ -80,7 +79,20 @@ pub fn create_for_taskbar(taskbar: HWND, class_name: PCWSTR, instance: HINSTANCE
     WIDGET_COUNT.fetch_add(1, Ordering::SeqCst);
 
     unsafe {
-        position_over_taskbar(&*widget_ptr, true);
+        // WS_EX_LAYERED, applied post-creation (CreateWindowExW rejects it
+        // for cross-process children): a plain child renders into the
+        // taskbar's legacy surface, which Windows 11 composites *below* the
+        // XAML content covering the whole bar. A layered child gets its own
+        // surface that DWM stacks above it.
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
+        let _ = SetLayeredWindowAttributes(
+            hwnd,
+            windows::Win32::Foundation::COLORREF(0),
+            255,
+            LWA_ALPHA,
+        );
+        position_over_taskbar(&*widget_ptr);
         let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
         let _ = SetTimer(hwnd, TIMER_ID, usage::TIMER_INTERVAL_MS, None);
     }
@@ -102,39 +114,6 @@ pub fn widget_hwnds() -> Vec<HWND> {
         .collect()
 }
 
-pub fn restore_above_taskbars() {
-    for ptr in WIDGETS
-        .lock()
-        .expect("widgets mutex poisoned")
-        .iter()
-        .copied()
-    {
-        let widget = unsafe { &*(ptr as *const WidgetWindow) };
-        unsafe {
-            if !widget.hwnd.0.is_null() && IsWindow(widget.hwnd).as_bool() {
-                position_over_taskbar(widget, true);
-            }
-        }
-    }
-}
-
-pub fn schedule_deferred_restacks() {
-    for hwnd in widget_hwnds() {
-        unsafe {
-            let _ = SetTimer(hwnd, RESTACK_TIMER_FAST_ID, RESTACK_FAST_INTERVAL_MS, None);
-            let _ = SetTimer(hwnd, RESTACK_TIMER_SLOW_ID, RESTACK_SLOW_INTERVAL_MS, None);
-        }
-    }
-}
-
-pub fn is_widget(hwnd: HWND) -> bool {
-    WIDGETS
-        .lock()
-        .expect("widgets mutex poisoned")
-        .iter()
-        .any(|ptr| unsafe { (*(*ptr as *const WidgetWindow)).hwnd == hwnd })
-}
-
 pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_NCCREATE => {
@@ -143,13 +122,12 @@ pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             LRESULT(1)
         }
         WM_TIMER => {
-            match wp.0 {
-                TIMER_ID => usage::start_fetch_if_due(false),
-                RESTACK_TIMER_FAST_ID | RESTACK_TIMER_SLOW_ID => {
-                    let _ = KillTimer(hwnd, wp.0);
-                    restore_above_taskbars();
+            if wp.0 == TIMER_ID {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WidgetWindow;
+                if !ptr.is_null() {
+                    position_over_taskbar(&*ptr);
                 }
-                _ => {}
+                usage::start_fetch_if_due(false);
             }
             LRESULT(0)
         }
@@ -192,41 +170,30 @@ pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
     }
 }
 
-unsafe fn position_over_taskbar(widget: &WidgetWindow, restore_topmost: bool) {
+unsafe fn position_over_taskbar(widget: &WidgetWindow) {
+    // Child window: coordinates are relative to the taskbar's client area.
     let mut rc = RECT::default();
-    let _ = GetWindowRect(widget.taskbar, &mut rc);
+    let _ = GetClientRect(widget.taskbar, &mut rc);
 
-    let taskbar_width = rc.right - rc.left;
-    let taskbar_height = rc.bottom - rc.top;
-    let mut x = rc.left + 8;
-    let mut y = rc.top + ((taskbar_height - WIDGET_HEIGHT) / 2);
+    let taskbar_width = rc.right;
+    let taskbar_height = rc.bottom;
+    let mut x = 8;
+    let mut y = (taskbar_height - WIDGET_HEIGHT) / 2;
 
     if taskbar_width < taskbar_height {
-        x = rc.left + ((taskbar_width - WIDGET_WIDTH) / 2);
-        y = rc.top + 8;
+        x = (taskbar_width - WIDGET_WIDTH) / 2;
+        y = 8;
     }
 
-    let insert_after = if restore_topmost {
-        HWND_TOPMOST
-    } else {
-        HWND(null_mut())
-    };
-    let flags = SWP_NOACTIVATE
-        | SWP_NOOWNERZORDER
-        | SWP_SHOWWINDOW
-        | if restore_topmost {
-            Default::default()
-        } else {
-            SWP_NOZORDER
-        };
-
+    // HWND_TOP keeps the widget above the taskbar's own content (the XAML
+    // island child covers the whole bar on Windows 11).
     let _ = SetWindowPos(
         widget.hwnd,
-        insert_after,
+        HWND_TOP,
         x,
         y,
         WIDGET_WIDTH,
         WIDGET_HEIGHT,
-        flags,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW,
     );
 }
