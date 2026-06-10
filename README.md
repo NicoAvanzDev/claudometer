@@ -20,6 +20,19 @@ cargo build --release
 
 The release binary is `target/release/claudometer.exe`.
 
+## Installer
+
+The Windows installer is built with [Inno Setup 6](https://jrsoftware.org/isinfo.php).
+
+```powershell
+cargo build --release
+iscc /DMyAppVersion=1.0.0 installer\claudometer.iss
+```
+
+The installer is written to `dist/Claudometer-Setup-1.0.0.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, can optionally create a desktop shortcut, and can start Claudometer at sign-in.
+
+GitHub Actions builds and uploads the installer automatically when a tagged GitHub release is published.
+
 ## Architecture
 
 The app is organized into focused modules:
