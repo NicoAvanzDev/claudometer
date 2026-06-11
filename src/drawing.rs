@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HINSTANCE, HWND, RECT};
+use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, ERROR_SUCCESS, HINSTANCE, HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
@@ -23,6 +23,9 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
+use windows::Win32::System::Registry::{
+    RegGetValueW, HKEY_CURRENT_USER, REG_VALUE_TYPE, RRF_RT_REG_DWORD,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, DrawIconEx, GetClientRect, LoadImageW, DI_NORMAL, HICON, IMAGE_ICON,
     LR_DEFAULTCOLOR,
@@ -33,7 +36,6 @@ use crate::widget::{SESSION_ROW_TOP, WEEKLY_ROW_TOP};
 use crate::winstr;
 
 const IDI_CLAUDECODE: usize = 110;
-
 static GRAPHICS: Lazy<Mutex<Option<GraphicsContext>>> = Lazy::new(|| Mutex::new(None));
 
 struct GraphicsContext {
@@ -42,12 +44,13 @@ struct GraphicsContext {
     small_text_format: IDWriteTextFormat,
     percent_text_format: IDWriteTextFormat,
     icon: Option<usize>,
+    light_taskbar: bool,
     windows: HashMap<isize, WindowResources>,
 }
 
 struct WindowResources {
     target: ID2D1HwndRenderTarget,
-    bg_brush: ID2D1SolidColorBrush,
+    bg_color: D2D1_COLOR_F,
     text_brush: ID2D1SolidColorBrush,
     muted_text_brush: ID2D1SolidColorBrush,
     track_brush: ID2D1SolidColorBrush,
@@ -90,6 +93,7 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
         small_text_format,
         percent_text_format,
         icon,
+        light_taskbar: system_uses_light_theme(),
         windows: HashMap::new(),
     });
 
@@ -160,10 +164,7 @@ impl GraphicsContext {
         resources.target.BeginDraw();
 
         let size = resources.target.GetSize();
-        resources.target.FillRectangle(
-            &rect(0.0, 0.0, size.width, size.height),
-            &resources.bg_brush,
-        );
+        resources.target.Clear(Some(&resources.bg_color));
 
         if snapshot.ok {
             draw_usage_row(
@@ -203,7 +204,7 @@ impl GraphicsContext {
     unsafe fn resources_for(&mut self, hwnd: HWND) -> windows::core::Result<&mut WindowResources> {
         let key = hwnd.0 as isize;
         if !self.windows.contains_key(&key) {
-            let resources = create_window_resources(&self.d2d_factory, hwnd)?;
+            let resources = create_window_resources(&self.d2d_factory, hwnd, self.light_taskbar)?;
             self.windows.insert(key, resources);
         }
 
@@ -245,6 +246,7 @@ fn create_text_format(
 unsafe fn create_window_resources(
     factory: &ID2D1Factory,
     hwnd: HWND,
+    light_taskbar: bool,
 ) -> windows::core::Result<WindowResources> {
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
@@ -271,12 +273,31 @@ unsafe fn create_window_resources(
 
     let target = factory.CreateHwndRenderTarget(&render_target_properties, &hwnd_properties)?;
     let render_target: ID2D1RenderTarget = target.cast()?;
+    let palette = Palette::for_taskbar(light_taskbar);
 
     Ok(WindowResources {
-        bg_brush: create_brush(&render_target, 0.12, 0.12, 0.12, 1.0)?,
-        text_brush: create_brush(&render_target, 1.0, 1.0, 1.0, 1.0)?,
-        muted_text_brush: create_brush(&render_target, 0.70, 0.70, 0.70, 1.0)?,
-        track_brush: create_brush(&render_target, 0.24, 0.24, 0.24, 1.0)?,
+        bg_color: color(palette.background),
+        text_brush: create_brush(
+            &render_target,
+            palette.text.0,
+            palette.text.1,
+            palette.text.2,
+            1.0,
+        )?,
+        muted_text_brush: create_brush(
+            &render_target,
+            palette.muted_text.0,
+            palette.muted_text.1,
+            palette.muted_text.2,
+            1.0,
+        )?,
+        track_brush: create_brush(
+            &render_target,
+            palette.track.0,
+            palette.track.1,
+            palette.track.2,
+            1.0,
+        )?,
         session_brush: create_brush(&render_target, 0.93, 0.53, 0.27, 1.0)?,
         weekly_brush: create_brush(&render_target, 0.36, 0.66, 0.95, 1.0)?,
         target,
@@ -375,4 +396,56 @@ fn rect(left: f32, top: f32, right: f32, bottom: f32) -> D2D_RECT_F {
         right,
         bottom,
     }
+}
+
+struct Palette {
+    background: (f32, f32, f32),
+    text: (f32, f32, f32),
+    muted_text: (f32, f32, f32),
+    track: (f32, f32, f32),
+}
+
+impl Palette {
+    fn for_taskbar(light_taskbar: bool) -> Self {
+        if light_taskbar {
+            return Self {
+                background: (0.95, 0.95, 0.95),
+                text: (0.08, 0.08, 0.08),
+                muted_text: (0.32, 0.32, 0.32),
+                track: (0.68, 0.68, 0.68),
+            };
+        }
+
+        Self {
+            background: (0.12, 0.12, 0.12),
+            text: (1.0, 1.0, 1.0),
+            muted_text: (0.70, 0.70, 0.70),
+            track: (0.24, 0.24, 0.24),
+        }
+    }
+}
+
+fn color((r, g, b): (f32, f32, f32)) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { r, g, b, a: 1.0 }
+}
+
+fn system_uses_light_theme() -> bool {
+    let subkey = winstr::wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let value_name = winstr::wide("SystemUsesLightTheme");
+    let mut value = 0u32;
+    let mut size = std::mem::size_of_val(&value) as u32;
+
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            PCWSTR(value_name.as_ptr()),
+            RRF_RT_REG_DWORD,
+            None::<*mut REG_VALUE_TYPE>,
+            Some((&mut value as *mut u32).cast()),
+            Some(&mut size),
+        )
+    };
+
+    status == ERROR_SUCCESS && value != 0
 }
