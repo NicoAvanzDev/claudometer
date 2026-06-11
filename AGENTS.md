@@ -22,6 +22,9 @@ cargo build
 cargo build --release
 ```
 
+Installer downloads should point users to the latest GitHub release:
+`https://github.com/NicoAvanzDev/claudometer/releases/latest`.
+
 ## Verification
 
 After code changes, build the affected configuration. For behavior changes, run the generated executable and verify the overlay on the Windows taskbar. Pay particular attention to:

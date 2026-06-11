@@ -27,6 +27,8 @@ The release binary is `target/release/claudometer.exe`.
 
 ## Installer
 
+Download the latest Windows installer from the [GitHub Releases page](https://github.com/NicoAvanzDev/claudometer/releases/latest).
+
 The Windows installer is built with [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ```powershell
