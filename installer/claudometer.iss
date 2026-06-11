@@ -2,7 +2,7 @@
 #define MyAppPublisher "NicoAvanzDev"
 #define MyAppExeName "claudometer.exe"
 #ifndef MyAppVersion
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #endif
 
 [Setup]
@@ -15,7 +15,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist
 OutputBaseFilename=Claudometer-Setup-{#MyAppVersion}
-SetupIconFile=..\assets\Claudometer.ico
+SetupIconFile=..\assets\small.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
