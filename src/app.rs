@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, MSG, WNDCLASSW,
 };
 
-use crate::{drawing, taskbar, usage, widget, winstr};
+use crate::{drawing, taskbar, tray, usage, widget, winstr};
 
 pub fn run() -> windows::core::Result<()> {
     crate::diagnostics::init();
@@ -44,6 +44,10 @@ pub fn run() -> windows::core::Result<()> {
             return Err(windows::core::Error::from_win32());
         }
 
+        if let Some(hwnd) = widget::primary_widget_hwnd() {
+            tray::init(hwnd, instance);
+        }
+
         crate::diagnostics::log("app", "starting initial usage fetch");
         usage::start_fetch_if_due(true);
 
@@ -60,6 +64,7 @@ pub fn run() -> windows::core::Result<()> {
 
 pub fn shutdown() {
     crate::diagnostics::log("app", "shutdown");
+    tray::shutdown();
     usage::shutdown();
     drawing::shutdown();
 }

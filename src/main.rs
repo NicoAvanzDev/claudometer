@@ -11,6 +11,8 @@ mod drawing;
 #[cfg(target_os = "windows")]
 mod taskbar;
 #[cfg(target_os = "windows")]
+mod tray;
+#[cfg(target_os = "windows")]
 mod usage;
 #[cfg(target_os = "windows")]
 mod widget;
