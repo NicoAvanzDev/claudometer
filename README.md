@@ -1,6 +1,11 @@
-# Claudometer
+# <img src="claudometer-icon.png" alt="Claudometer icon" width="32" height="32"> Claudometer
+
+[![Build](https://img.shields.io/github/actions/workflow/status/NicoAvanzDev/claudometer/ci.yml?branch=master&job=build&label=build)](https://github.com/NicoAvanzDev/claudometer/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/NicoAvanzDev/claudometer/ci.yml?branch=master&job=tests&label=tests)](https://github.com/NicoAvanzDev/claudometer/actions/workflows/ci.yml)
 
 A native Windows taskbar overlay widget written in Rust that displays Claude Code usage statistics—session (5h) and weekly (7d) token consumption percentages.
+
+![Claudometer taskbar widget](claudometer-widget.png)
 
 ## Features
 
@@ -26,10 +31,10 @@ The Windows installer is built with [Inno Setup 6](https://jrsoftware.org/isinfo
 
 ```powershell
 cargo build --release
-iscc /DMyAppVersion=1.1.2 installer\claudometer.iss
+iscc /DMyAppVersion=1.1.3 installer\claudometer.iss
 ```
 
-The installer is written to `dist/Claudometer-Setup-1.1.2.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, and starts Claudometer automatically at sign-in through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+The installer is written to `dist/Claudometer-Setup-1.1.3.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, and starts Claudometer automatically at sign-in through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 GitHub Actions builds and uploads the installer automatically when a tagged GitHub release is published.
 
