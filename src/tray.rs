@@ -20,7 +20,7 @@ use crate::{diagnostics, widget, winstr};
 pub const WM_TRAYICON: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 2;
 
 const TRAY_ID: u32 = 1;
-const IDI_SMALL: usize = 108;
+const IDI_SMALL: usize = 111;
 const CMD_RELOAD: u32 = 1001;
 const CMD_OPEN_LOGS: u32 = 1002;
 const CMD_QUIT: u32 = 1003;
@@ -91,7 +91,7 @@ pub fn shutdown() {
     diagnostics::log("tray", "tray icon removed");
 }
 
-pub unsafe fn handle_message(hwnd: HWND, lp: LPARAM) {
+pub fn handle_message(hwnd: HWND, lp: LPARAM) {
     let event = (lp.0 as u32) & 0xffff;
     if event == NIN_SELECT
         || event == WM_LBUTTONUP
@@ -124,8 +124,8 @@ fn notify_data(hwnd: HWND, icon: Option<usize>) -> NOTIFYICONDATAW {
     data
 }
 
-unsafe fn show_menu(hwnd: HWND) {
-    let Ok(menu) = CreatePopupMenu() else {
+fn show_menu(hwnd: HWND) {
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
         diagnostics::log("tray", "failed to create popup menu");
         return;
     };
@@ -134,40 +134,45 @@ unsafe fn show_menu(hwnd: HWND) {
     let logs = winstr::wide("Open logs folder");
     let quit = winstr::wide("Quit");
 
-    let _ = AppendMenuW(
-        menu,
-        MF_STRING,
-        CMD_RELOAD as usize,
-        PCWSTR(reload.as_ptr()),
-    );
-    let _ = AppendMenuW(
-        menu,
-        MF_STRING,
-        CMD_OPEN_LOGS as usize,
-        PCWSTR(logs.as_ptr()),
-    );
-    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-    let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT as usize, PCWSTR(quit.as_ptr()));
+    unsafe {
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_RELOAD as usize,
+            PCWSTR(reload.as_ptr()),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_OPEN_LOGS as usize,
+            PCWSTR(logs.as_ptr()),
+        );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT as usize, PCWSTR(quit.as_ptr()));
+    }
 
     let mut point = POINT::default();
-    if GetCursorPos(&mut point).is_err() {
-        let _ = DestroyMenu(menu);
+    if unsafe { GetCursorPos(&mut point) }.is_err() {
+        let _ = unsafe { DestroyMenu(menu) };
         diagnostics::log("tray", "failed to read cursor position");
         return;
     }
 
-    let _ = SetForegroundWindow(hwnd);
-    let command = TrackPopupMenu(
-        menu,
-        TPM_RETURNCMD | TPM_RIGHTBUTTON,
-        point.x,
-        point.y,
-        0,
-        hwnd,
-        None,
-    )
-    .0 as u32;
-    let _ = DestroyMenu(menu);
+    let command = unsafe {
+        let _ = SetForegroundWindow(hwnd);
+        let command = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            point.x,
+            point.y,
+            0,
+            hwnd,
+            None,
+        )
+        .0 as u32;
+        let _ = DestroyMenu(menu);
+        command
+    };
 
     match command {
         CMD_RELOAD => widget::reload_all(),

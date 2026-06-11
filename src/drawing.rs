@@ -35,7 +35,7 @@ use crate::usage;
 use crate::widget::{SESSION_ROW_TOP, WEEKLY_ROW_TOP};
 use crate::winstr;
 
-const IDI_SMALL: usize = 108;
+const IDI_WIDGET: usize = 112;
 static GRAPHICS: Lazy<Mutex<Option<GraphicsContext>>> = Lazy::new(|| Mutex::new(None));
 
 struct GraphicsContext {
@@ -77,7 +77,7 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
     let icon = unsafe {
         LoadImageW(
             instance,
-            PCWSTR(IDI_SMALL as *const u16),
+            PCWSTR(IDI_WIDGET as *const u16),
             IMAGE_ICON,
             32,
             32,
@@ -117,9 +117,9 @@ pub fn discard_window_resources(hwnd: HWND) {
     }
 }
 
-pub unsafe fn paint(hwnd: HWND) {
+pub fn paint(hwnd: HWND) {
     let mut ps = PAINTSTRUCT::default();
-    let hdc = BeginPaint(hwnd, &mut ps);
+    let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
     if hdc.0 == null_mut() {
         return;
     }
@@ -138,8 +138,9 @@ pub unsafe fn paint(hwnd: HWND) {
 
             if !recreate_target {
                 if let Some(icon) = context.icon {
-                    let _ =
-                        DrawIconEx(hdc, 4, 2, HICON(icon as *mut _), 32, 32, 0, None, DI_NORMAL);
+                    let _ = unsafe {
+                        DrawIconEx(hdc, 4, 2, HICON(icon as *mut _), 32, 32, 0, None, DI_NORMAL)
+                    };
                 }
             }
         }
@@ -147,24 +148,28 @@ pub unsafe fn paint(hwnd: HWND) {
 
     if recreate_target {
         discard_window_resources(hwnd);
-        let _ = InvalidateRect(hwnd, None, false);
+        let _ = unsafe { InvalidateRect(hwnd, None, false) };
     }
 
-    let _ = EndPaint(hwnd, &ps);
+    let _ = unsafe { EndPaint(hwnd, &ps) };
 }
 
 impl GraphicsContext {
-    unsafe fn paint_d2d(&mut self, hwnd: HWND) -> windows::core::Result<()> {
+    fn paint_d2d(&mut self, hwnd: HWND) -> windows::core::Result<()> {
         let text_format = self.text_format.clone();
         let small_text_format = self.small_text_format.clone();
         let percent_text_format = self.percent_text_format.clone();
         let resources = self.resources_for(hwnd)?;
         let snapshot = usage::snapshot();
 
-        resources.target.BeginDraw();
+        unsafe {
+            resources.target.BeginDraw();
+        }
 
-        let size = resources.target.GetSize();
-        resources.target.Clear(Some(&resources.bg_color));
+        let size = unsafe { resources.target.GetSize() };
+        unsafe {
+            resources.target.Clear(Some(&resources.bg_color));
+        }
 
         if snapshot.ok {
             draw_usage_row(
@@ -198,10 +203,10 @@ impl GraphicsContext {
             );
         }
 
-        resources.target.EndDraw(None, None)
+        unsafe { resources.target.EndDraw(None, None) }
     }
 
-    unsafe fn resources_for(&mut self, hwnd: HWND) -> windows::core::Result<&mut WindowResources> {
+    fn resources_for(&mut self, hwnd: HWND) -> windows::core::Result<&mut WindowResources> {
         let key = hwnd.0 as isize;
         if !self.windows.contains_key(&key) {
             let resources = create_window_resources(&self.d2d_factory, hwnd, self.light_taskbar)?;
@@ -243,13 +248,13 @@ fn create_text_format(
     Ok(format)
 }
 
-unsafe fn create_window_resources(
+fn create_window_resources(
     factory: &ID2D1Factory,
     hwnd: HWND,
     light_taskbar: bool,
 ) -> windows::core::Result<WindowResources> {
     let mut rc = RECT::default();
-    let _ = GetClientRect(hwnd, &mut rc);
+    let _ = unsafe { GetClientRect(hwnd, &mut rc) };
 
     let render_target_properties = D2D1_RENDER_TARGET_PROPERTIES {
         r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -271,7 +276,8 @@ unsafe fn create_window_resources(
         presentOptions: D2D1_PRESENT_OPTIONS_NONE,
     };
 
-    let target = factory.CreateHwndRenderTarget(&render_target_properties, &hwnd_properties)?;
+    let target =
+        unsafe { factory.CreateHwndRenderTarget(&render_target_properties, &hwnd_properties)? };
     let render_target: ID2D1RenderTarget = target.cast()?;
     let palette = Palette::for_taskbar(light_taskbar);
 
@@ -304,17 +310,17 @@ unsafe fn create_window_resources(
     })
 }
 
-unsafe fn create_brush(
+fn create_brush(
     target: &ID2D1RenderTarget,
     r: f32,
     g: f32,
     b: f32,
     a: f32,
 ) -> windows::core::Result<ID2D1SolidColorBrush> {
-    target.CreateSolidColorBrush(&D2D1_COLOR_F { r, g, b, a }, None)
+    unsafe { target.CreateSolidColorBrush(&D2D1_COLOR_F { r, g, b, a }, None) }
 }
 
-unsafe fn draw_usage_row(
+fn draw_usage_row(
     resources: &WindowResources,
     text_format: &IDWriteTextFormat,
     percent_format: &IDWriteTextFormat,
@@ -355,7 +361,7 @@ unsafe fn draw_usage_row(
     }
 }
 
-unsafe fn draw_text(
+fn draw_text(
     target: &ID2D1HwndRenderTarget,
     text: &str,
     format: &IDWriteTextFormat,
@@ -363,30 +369,34 @@ unsafe fn draw_text(
     brush: &ID2D1SolidColorBrush,
 ) {
     let wide = winstr::wide(text);
-    target.DrawText(
-        &wide[..wide.len().saturating_sub(1)],
-        format,
-        &layout,
-        brush,
-        D2D1_DRAW_TEXT_OPTIONS_NONE,
-        DWRITE_MEASURING_MODE_NATURAL,
-    );
+    unsafe {
+        target.DrawText(
+            &wide[..wide.len().saturating_sub(1)],
+            format,
+            &layout,
+            brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+    }
 }
 
-unsafe fn fill_rounded(
+fn fill_rounded(
     target: &ID2D1HwndRenderTarget,
     area: D2D_RECT_F,
     radius: f32,
     brush: &ID2D1SolidColorBrush,
 ) {
-    target.FillRoundedRectangle(
-        &D2D1_ROUNDED_RECT {
-            rect: area,
-            radiusX: radius,
-            radiusY: radius,
-        },
-        brush,
-    );
+    unsafe {
+        target.FillRoundedRectangle(
+            &D2D1_ROUNDED_RECT {
+                rect: area,
+                radiusX: radius,
+                radiusY: radius,
+            },
+            brush,
+        );
+    }
 }
 
 fn rect(left: f32, top: f32, right: f32, bottom: f32) -> D2D_RECT_F {

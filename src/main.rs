@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(target_os = "windows")]
 mod app;

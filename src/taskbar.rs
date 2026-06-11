@@ -32,7 +32,7 @@ pub fn is_taskbar_window(hwnd: HWND) -> bool {
 
 unsafe extern "system" fn enum_taskbar_windows(hwnd: HWND, lp: LPARAM) -> BOOL {
     if is_taskbar_window(hwnd) {
-        let taskbars = &mut *(lp.0 as *mut Vec<HWND>);
+        let taskbars = unsafe { &mut *(lp.0 as *mut Vec<HWND>) };
         taskbars.push(hwnd);
     }
 
