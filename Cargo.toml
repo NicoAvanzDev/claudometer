@@ -1,6 +1,6 @@
 [package]
 name = "claudometer"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 build = "build.rs"
 
@@ -22,6 +22,7 @@ windows = { version = "0.58", features = [
     "Win32_System_StationsAndDesktops",
     "Win32_System_LibraryLoader",
     "Win32_System_RemoteDesktop",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

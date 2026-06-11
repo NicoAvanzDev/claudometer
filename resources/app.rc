@@ -4,4 +4,3 @@
 
 IDI_APP        ICON "../assets/small.ico"
 IDI_SMALL      ICON "../assets/small.ico"
-IDI_CLAUDECODE ICON "../assets/claudecode.ico"

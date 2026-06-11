@@ -10,9 +10,9 @@ use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, GetWindowLongPtrW, KillTimer, PostQuitMessage,
-    SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, CREATESTRUCTW,
-    GWLP_USERDATA, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowLongPtrW, KillTimer,
+    PostQuitMessage, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos,
+    CREATESTRUCTW, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
     WINDOW_EX_STYLE, WM_DESTROY, WM_ERASEBKGND, WM_NCCREATE, WM_PAINT, WM_TIMER,
     WM_WTSSESSION_CHANGE, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WTS_SESSION_UNLOCK,
 };
@@ -108,7 +108,51 @@ pub fn widget_hwnds() -> Vec<HWND> {
         .collect()
 }
 
+pub fn primary_widget_hwnd() -> Option<HWND> {
+    widget_hwnds().into_iter().next()
+}
+
+pub fn reload_all() {
+    crate::diagnostics::log("widget", "reload requested");
+
+    for ptr in WIDGETS
+        .lock()
+        .expect("widgets mutex poisoned")
+        .iter()
+        .copied()
+        .collect::<Vec<_>>()
+    {
+        let widget = unsafe { &*(ptr as *const WidgetWindow) };
+        if widget.hwnd.0.is_null() {
+            continue;
+        }
+
+        unsafe {
+            position_over_taskbar(widget);
+            drawing::discard_window_resources(widget.hwnd);
+            let _ = InvalidateRect(widget.hwnd, None, true);
+        }
+    }
+
+    usage::start_fetch_if_due(true);
+}
+
+pub fn destroy_all() {
+    crate::diagnostics::log("widget", "destroy all requested");
+
+    for hwnd in widget_hwnds() {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+    }
+}
+
 pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == crate::tray::WM_TRAYICON {
+        crate::tray::handle_message(hwnd, lp);
+        return LRESULT(0);
+    }
+
     match msg {
         WM_NCCREATE => {
             let create = &*(lp.0 as *const CREATESTRUCTW);

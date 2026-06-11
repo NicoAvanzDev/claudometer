@@ -35,7 +35,7 @@ use crate::usage;
 use crate::widget::{SESSION_ROW_TOP, WEEKLY_ROW_TOP};
 use crate::winstr;
 
-const IDI_CLAUDECODE: usize = 110;
+const IDI_SMALL: usize = 108;
 static GRAPHICS: Lazy<Mutex<Option<GraphicsContext>>> = Lazy::new(|| Mutex::new(None));
 
 struct GraphicsContext {
@@ -77,7 +77,7 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
     let icon = unsafe {
         LoadImageW(
             instance,
-            PCWSTR(IDI_CLAUDECODE as *const u16),
+            PCWSTR(IDI_SMALL as *const u16),
             IMAGE_ICON,
             32,
             32,

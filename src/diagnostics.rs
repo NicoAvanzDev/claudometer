@@ -8,6 +8,7 @@ use once_cell::sync::Lazy;
 
 const LOG_FILE_NAME: &str = "claudometer.log";
 const OLD_LOG_FILE_NAME: &str = "claudometer.log.old";
+const LOG_DIR_NAME: &str = "logs";
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 static LOGGER: Lazy<Mutex<Logger>> = Lazy::new(|| Mutex::new(Logger::new()));
@@ -31,6 +32,20 @@ pub fn log(source: &str, message: impl AsRef<str>) {
         return;
     };
     logger.write(source, message.as_ref());
+}
+
+pub fn log_folder() -> Option<PathBuf> {
+    LOGGER
+        .lock()
+        .expect("logger mutex poisoned")
+        .path
+        .as_ref()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(|parent| parent.join(LOG_DIR_NAME)))
+        })
 }
 
 fn display_path(path: Option<&PathBuf>) -> String {
@@ -85,7 +100,9 @@ impl Logger {
 fn log_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    Some(dir.join(LOG_FILE_NAME))
+    let log_dir = dir.join(LOG_DIR_NAME);
+    let _ = fs::create_dir_all(&log_dir);
+    Some(log_dir.join(LOG_FILE_NAME))
 }
 
 fn rotate_log(path: &PathBuf) {
