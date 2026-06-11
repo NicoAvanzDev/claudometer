@@ -5,6 +5,8 @@ mod app;
 #[cfg(target_os = "windows")]
 mod credentials;
 #[cfg(target_os = "windows")]
+mod diagnostics;
+#[cfg(target_os = "windows")]
 mod drawing;
 #[cfg(target_os = "windows")]
 mod taskbar;

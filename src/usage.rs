@@ -51,12 +51,20 @@ pub fn snapshot() -> UsageSnapshot {
 
 pub fn start_fetch_if_due(force: bool) {
     if crate::app::is_workstation_locked() {
+        crate::diagnostics::log("usage", "fetch skipped workstation locked");
         return;
     }
 
     let now = unsafe { windows::Win32::System::SystemInformation::GetTickCount() };
     let last = LAST_FETCH_TICK.load(Ordering::SeqCst);
     if !force && last != 0 && now.wrapping_sub(last) < USAGE_POLL_INTERVAL_MS {
+        crate::diagnostics::log(
+            "usage",
+            format!(
+                "fetch skipped not due elapsed_ms={}",
+                now.wrapping_sub(last)
+            ),
+        );
         return;
     }
 
@@ -64,6 +72,7 @@ pub fn start_fetch_if_due(force: bool) {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
+        crate::diagnostics::log("usage", "fetch skipped already in flight");
         return;
     }
 
@@ -75,8 +84,21 @@ pub fn start_fetch_if_due(force: bool) {
     }
 
     *slot = Some(thread::spawn(|| {
+        crate::diagnostics::log("usage", "fetch started");
         let mut snapshot = UsageSnapshot::default();
         let _ = query_claude_usage(&mut snapshot);
+        crate::diagnostics::log(
+            "usage",
+            format!(
+                "fetch finished ok={} status={} session_percent={} weekly_percent={} session_reset_minutes={} weekly_reset_minutes={}",
+                snapshot.ok,
+                snapshot.status,
+                snapshot.session_percent,
+                snapshot.weekly_percent,
+                snapshot.session_reset_minutes,
+                snapshot.weekly_reset_minutes
+            ),
+        );
         update_usage_state(snapshot);
         FETCH_IN_FLIGHT.store(false, Ordering::SeqCst);
     }));
@@ -111,19 +133,29 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
     let Some(token) = credentials::read_claude_token() else {
         snapshot.status = "no token".to_owned();
         snapshot.ok = false;
+        crate::diagnostics::log("usage", "query stopped no token");
         return false;
     };
+    crate::diagnostics::log(
+        "usage",
+        format!("token loaded token_chars={}", token.chars().count()),
+    );
 
     let agent = match build_agent() {
         Ok(agent) => agent,
         Err(_) => {
             snapshot.status = "http init".to_owned();
             snapshot.ok = false;
+            crate::diagnostics::log("usage", "http client initialization failed");
             return false;
         }
     };
 
     let body = r#"{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#;
+    crate::diagnostics::log(
+        "usage",
+        "api request start method=POST url=https://api.anthropic.com/v1/messages model=claude-haiku-4-5-20251001",
+    );
     let response = agent
         .post("https://api.anthropic.com/v1/messages")
         .set("anthropic-version", "2023-06-01")
@@ -134,8 +166,15 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
         .send_string(body);
 
     let response = match response {
-        Ok(response) => response,
+        Ok(response) => {
+            crate::diagnostics::log(
+                "usage",
+                format!("api response ok status={}", response.status()),
+            );
+            response
+        }
         Err(ureq::Error::Status(code, response)) => {
+            crate::diagnostics::log("usage", format!("api response error status={code}"));
             if code == 401 || code == 403 {
                 snapshot.status = "login".to_owned();
             } else {
@@ -144,9 +183,10 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
             snapshot.ok = false;
             return response.status() < 400;
         }
-        Err(_) => {
+        Err(error) => {
             snapshot.status = "http failed".to_owned();
             snapshot.ok = false;
+            crate::diagnostics::log("usage", format!("api request failed error={error}"));
             return false;
         }
     };
@@ -164,6 +204,7 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
         .unwrap_or("ok")
         .to_owned();
     snapshot.ok = true;
+    log_response_headers(&response);
     true
 }
 
@@ -178,10 +219,15 @@ fn build_agent() -> Result<ureq::Agent, ureq::native_tls::Error> {
 
 fn percent_from_header(response: &Response, name: &str) -> i32 {
     let Some(value) = response.header(name) else {
+        crate::diagnostics::log("usage", format!("missing response header name={name}"));
         return 0;
     };
 
     let Ok(utilization) = value.parse::<f64>() else {
+        crate::diagnostics::log(
+            "usage",
+            format!("invalid percent header name={name} value={value}"),
+        );
         return 0;
     };
 
@@ -190,10 +236,15 @@ fn percent_from_header(response: &Response, name: &str) -> i32 {
 
 fn reset_minutes_from_header(response: &Response, name: &str) -> i32 {
     let Some(value) = response.header(name) else {
+        crate::diagnostics::log("usage", format!("missing response header name={name}"));
         return 0;
     };
 
     let Ok(reset_at) = value.parse::<f64>() else {
+        crate::diagnostics::log(
+            "usage",
+            format!("invalid reset header name={name} value={value}"),
+        );
         return 0;
     };
 
@@ -207,4 +258,28 @@ fn reset_minutes_from_header(response: &Response, name: &str) -> i32 {
     } else {
         0
     }
+}
+
+fn log_response_headers(response: &Response) {
+    crate::diagnostics::log(
+        "usage",
+        format!(
+            "rate headers 5h_utilization={} 7d_utilization={} 5h_reset={} 7d_reset={} 5h_status={}",
+            response
+                .header("anthropic-ratelimit-unified-5h-utilization")
+                .unwrap_or("<missing>"),
+            response
+                .header("anthropic-ratelimit-unified-7d-utilization")
+                .unwrap_or("<missing>"),
+            response
+                .header("anthropic-ratelimit-unified-5h-reset")
+                .unwrap_or("<missing>"),
+            response
+                .header("anthropic-ratelimit-unified-7d-reset")
+                .unwrap_or("<missing>"),
+            response
+                .header("anthropic-ratelimit-unified-5h-status")
+                .unwrap_or("<missing>")
+        ),
+    );
 }
