@@ -2,5 +2,9 @@
 
 1 24 "app.manifest"
 
-IDI_APP        ICON "../assets/small.ico"
-IDI_SMALL      ICON "../assets/small.ico"
+IDI_APP        ICON "../assets/icon128x128.ico"
+IDI_APP_64     ICON "../assets/icon64x64.ico"
+IDI_APP_48     ICON "../assets/icon48x48.ico"
+IDI_APP_32     ICON "../assets/icon32x32.ico"
+IDI_SMALL      ICON "../assets/icon16x16.ico"
+IDI_WIDGET     ICON "../assets/claudecode.ico"
