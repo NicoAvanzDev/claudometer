@@ -282,7 +282,7 @@ fn create_window_resources(
     let palette = Palette::for_taskbar(light_taskbar);
 
     Ok(WindowResources {
-        bg_color: color(palette.background),
+        bg_color: colorref(crate::widget::transparent_color()),
         text_brush: create_brush(
             &render_target,
             palette.text.0,
@@ -409,7 +409,6 @@ fn rect(left: f32, top: f32, right: f32, bottom: f32) -> D2D_RECT_F {
 }
 
 struct Palette {
-    background: (f32, f32, f32),
     text: (f32, f32, f32),
     muted_text: (f32, f32, f32),
     track: (f32, f32, f32),
@@ -419,7 +418,6 @@ impl Palette {
     fn for_taskbar(light_taskbar: bool) -> Self {
         if light_taskbar {
             return Self {
-                background: (0.95, 0.95, 0.95),
                 text: (0.08, 0.08, 0.08),
                 muted_text: (0.32, 0.32, 0.32),
                 track: (0.68, 0.68, 0.68),
@@ -427,7 +425,6 @@ impl Palette {
         }
 
         Self {
-            background: (0.12, 0.12, 0.12),
             text: (1.0, 1.0, 1.0),
             muted_text: (0.70, 0.70, 0.70),
             track: (0.24, 0.24, 0.24),
@@ -435,8 +432,14 @@ impl Palette {
     }
 }
 
-fn color((r, g, b): (f32, f32, f32)) -> D2D1_COLOR_F {
-    D2D1_COLOR_F { r, g, b, a: 1.0 }
+fn colorref(value: windows::Win32::Foundation::COLORREF) -> D2D1_COLOR_F {
+    let raw = value.0;
+    D2D1_COLOR_F {
+        r: (raw & 0xff) as f32 / 255.0,
+        g: ((raw >> 8) & 0xff) as f32 / 255.0,
+        b: ((raw >> 16) & 0xff) as f32 / 255.0,
+        a: 1.0,
+    }
 }
 
 fn system_uses_light_theme() -> bool {

@@ -1,6 +1,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::panic;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,8 +14,15 @@ const LOG_DIR_NAME: &str = "logs";
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 
 static LOGGER: Lazy<Mutex<Logger>> = Lazy::new(|| Mutex::new(Logger::new()));
+static LOGGER_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static EXCEPTION_FILTER_INSTALLED: AtomicBool = AtomicBool::new(false);
+static PANIC_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 pub fn init() {
+    if LOGGER_INITIALIZED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     let path = LOGGER.lock().expect("logger mutex poisoned").path.clone();
 
     log(
@@ -25,6 +34,86 @@ pub fn init() {
             display_path(path.as_ref())
         ),
     );
+}
+
+pub fn install_panic_hook() {
+    if PANIC_HOOK_INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("<non-string panic payload>");
+        let location = info
+            .location()
+            .map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            })
+            .unwrap_or_else(|| "<unknown>".to_owned());
+
+        log(
+            "panic",
+            format!(
+                "process panic pid={} thread={:?} location={} message={}",
+                std::process::id(),
+                std::thread::current().id(),
+                location,
+                payload
+            ),
+        );
+
+        default_hook(info);
+    }));
+}
+
+#[cfg(target_os = "windows")]
+pub fn install_exception_filter() {
+    if EXCEPTION_FILTER_INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    unsafe {
+        windows::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter(Some(
+            unhandled_exception_filter,
+        ));
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn unhandled_exception_filter(
+    exception_info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+) -> i32 {
+    let Some(exception_info) = (unsafe { exception_info.as_ref() }) else {
+        log("crash", "unhandled exception with no exception info");
+        return windows::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH;
+    };
+    let Some(record) = (unsafe { exception_info.ExceptionRecord.as_ref() }) else {
+        log("crash", "unhandled exception with no exception record");
+        return windows::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH;
+    };
+
+    log(
+        "crash",
+        format!(
+            "unhandled exception pid={} code=0x{:08x} flags=0x{:08x} address={:?}",
+            std::process::id(),
+            record.ExceptionCode.0 as u32,
+            record.ExceptionFlags,
+            record.ExceptionAddress
+        ),
+    );
+
+    windows::Win32::System::Diagnostics::Debug::EXCEPTION_CONTINUE_SEARCH
 }
 
 pub fn log(source: &str, message: impl AsRef<str>) {

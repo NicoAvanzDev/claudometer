@@ -3,15 +3,20 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{
+    COLORREF, ERROR_SUCCESS, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
+};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
+use windows::Win32::System::Registry::{
+    RegGetValueW, HKEY_CURRENT_USER, REG_VALUE_TYPE, RRF_RT_REG_DWORD,
+};
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetParent, GetWindowLongPtrW,
     KillTimer, PostQuitMessage, SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SetWindowPos, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE, SWP_SHOWWINDOW,
     WINDOW_EX_STYLE, WM_DESTROY, WM_ERASEBKGND, WM_NCCREATE, WM_PAINT, WM_TIMER,
     WM_WTSSESSION_CHANGE, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WTS_SESSION_UNLOCK,
 };
@@ -24,6 +29,8 @@ pub const WIDGET_WIDTH: i32 = 164;
 pub const WIDGET_HEIGHT: i32 = 36;
 pub const SESSION_ROW_TOP: f32 = -0.5;
 pub const WEEKLY_ROW_TOP: f32 = 18.0;
+pub const LIGHT_TRANSPARENT_COLOR: COLORREF = COLORREF(0x00f2f2f2);
+pub const DARK_TRANSPARENT_COLOR: COLORREF = COLORREF(0x001f1f1f);
 
 static WIDGETS: Lazy<Mutex<Vec<usize>>> = Lazy::new(|| Mutex::new(Vec::new()));
 static WIDGET_COUNT: AtomicI32 = AtomicI32::new(0);
@@ -67,11 +74,41 @@ pub fn create_for_taskbar(taskbar: HWND, class_name: PCWSTR, instance: HINSTANCE
         // surface that DWM stacks above it.
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
-        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
+        let _ =
+            SetLayeredWindowAttributes(hwnd, transparent_color(), 255, LWA_ALPHA | LWA_COLORKEY);
         let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
         let _ = SetTimer(hwnd, TIMER_ID, usage::TIMER_INTERVAL_MS, None);
     }
     position_over_taskbar(hwnd, taskbar);
+}
+
+pub fn transparent_color() -> COLORREF {
+    if system_uses_light_theme() {
+        LIGHT_TRANSPARENT_COLOR
+    } else {
+        DARK_TRANSPARENT_COLOR
+    }
+}
+
+fn system_uses_light_theme() -> bool {
+    let subkey = winstr::wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let value_name = winstr::wide("SystemUsesLightTheme");
+    let mut value = 0u32;
+    let mut size = std::mem::size_of_val(&value) as u32;
+
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            PCWSTR(value_name.as_ptr()),
+            RRF_RT_REG_DWORD,
+            None::<*mut REG_VALUE_TYPE>,
+            Some((&mut value as *mut u32).cast()),
+            Some(&mut size),
+        )
+    };
+
+    status == ERROR_SUCCESS && value != 0
 }
 
 pub fn has_widgets() -> bool {

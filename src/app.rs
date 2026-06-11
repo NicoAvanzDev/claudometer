@@ -1,9 +1,10 @@
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::HINSTANCE;
+use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HINSTANCE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, OpenInputDesktop, SwitchDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_SWITCHDESKTOP,
 };
+use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, LoadCursorW, LoadImageW, RegisterClassW, TranslateMessage,
     HCURSOR, HICON, IDC_ARROW, IMAGE_ICON, LR_DEFAULTCOLOR, MSG, WNDCLASSW,
@@ -16,6 +17,9 @@ const IDI_APP_32: usize = 110;
 pub fn run() -> windows::core::Result<()> {
     crate::diagnostics::init();
     crate::diagnostics::log("app", "startup");
+    let Some(single_instance_lock) = SingleInstanceLock::acquire()? else {
+        return Ok(());
+    };
 
     let module = unsafe { GetModuleHandleW(None)? };
     let instance = HINSTANCE(module.0);
@@ -76,7 +80,34 @@ pub fn run() -> windows::core::Result<()> {
     }
 
     crate::diagnostics::log("app", "message loop exited");
+    drop(single_instance_lock);
     Ok(())
+}
+
+struct SingleInstanceLock(windows::Win32::Foundation::HANDLE);
+
+impl SingleInstanceLock {
+    fn acquire() -> windows::core::Result<Option<Self>> {
+        let name = winstr::wide("Local\\ClaudometerSingleInstance");
+        let handle = unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr()))? };
+        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            crate::diagnostics::log("app", "startup skipped existing instance");
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            return Ok(None);
+        }
+
+        Ok(Some(Self(handle)))
+    }
+}
+
+impl Drop for SingleInstanceLock {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
 }
 
 pub fn shutdown() {
