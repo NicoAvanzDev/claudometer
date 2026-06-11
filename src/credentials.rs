@@ -3,26 +3,81 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn read_claude_token() -> Option<String> {
-    credential_candidates()
-        .into_iter()
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .find_map(|blob| extract_access_token(&blob))
+    let candidates = credential_candidates();
+    crate::diagnostics::log(
+        "credentials",
+        format!("checking credential candidates count={}", candidates.len()),
+    );
+
+    for path in candidates {
+        crate::diagnostics::log(
+            "credentials",
+            format!("reading candidate path={}", path.display()),
+        );
+
+        let blob = match fs::read_to_string(&path) {
+            Ok(blob) => {
+                crate::diagnostics::log(
+                    "credentials",
+                    format!(
+                        "candidate read ok path={} bytes={}",
+                        path.display(),
+                        blob.len()
+                    ),
+                );
+                blob
+            }
+            Err(error) => {
+                crate::diagnostics::log(
+                    "credentials",
+                    format!(
+                        "candidate read failed path={} error={error}",
+                        path.display()
+                    ),
+                );
+                continue;
+            }
+        };
+
+        if let Some(token) = extract_access_token(&blob) {
+            crate::diagnostics::log(
+                "credentials",
+                format!(
+                    "access token found path={} token_chars={}",
+                    path.display(),
+                    token.chars().count()
+                ),
+            );
+            return Some(token);
+        }
+
+        crate::diagnostics::log(
+            "credentials",
+            format!("no access token in candidate path={}", path.display()),
+        );
+    }
+
+    crate::diagnostics::log("credentials", "no usable credential found");
+    None
 }
 
 fn credential_candidates() -> Vec<PathBuf> {
     if let Ok(path) = env::var("CLAUDE_CREDENTIALS_PATH") {
         if !path.is_empty() {
+            crate::diagnostics::log("credentials", "using CLAUDE_CREDENTIALS_PATH");
             return vec![PathBuf::from(path)];
         }
     }
 
     if let Ok(path) = env::var("CLAUDE_CONFIG_DIR") {
         if !path.is_empty() {
+            crate::diagnostics::log("credentials", "using CLAUDE_CONFIG_DIR");
             return vec![PathBuf::from(path).join(".credentials.json")];
         }
     }
 
     let Some(home) = env::var_os("USERPROFILE") else {
+        crate::diagnostics::log("credentials", "USERPROFILE is not set");
         return Vec::new();
     };
 
@@ -58,6 +113,8 @@ fn extract_access_token(blob: &str) -> Option<String> {
         if let Some(token) = find_access_token(&json) {
             return Some(token.to_owned());
         }
+    } else {
+        crate::diagnostics::log("credentials", "credential content is not json");
     }
 
     let trimmed = blob.trim();

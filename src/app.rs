@@ -12,10 +12,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::{drawing, taskbar, usage, widget, winstr};
 
 pub fn run() -> windows::core::Result<()> {
+    crate::diagnostics::init();
+    crate::diagnostics::log("app", "startup");
+
     unsafe {
         let module = GetModuleHandleW(None)?;
         let instance = HINSTANCE(module.0);
         let class_name = winstr::wide("ClaudometerOverlay");
+        crate::diagnostics::log("app", "registering window class");
 
         let wc = WNDCLASSW {
             hInstance: instance,
@@ -27,15 +31,20 @@ pub fn run() -> windows::core::Result<()> {
         RegisterClassW(&wc);
 
         drawing::init(instance)?;
+        crate::diagnostics::log("app", "drawing initialized");
 
-        for taskbar in taskbar::find_taskbars() {
+        let taskbars = taskbar::find_taskbars();
+        crate::diagnostics::log("app", format!("taskbars found count={}", taskbars.len()));
+        for taskbar in taskbars {
             widget::create_for_taskbar(taskbar, PCWSTR(class_name.as_ptr()), instance);
         }
 
         if !widget::has_widgets() {
+            crate::diagnostics::log("app", "startup failed no widgets created");
             return Err(windows::core::Error::from_win32());
         }
 
+        crate::diagnostics::log("app", "starting initial usage fetch");
         usage::start_fetch_if_due(true);
 
         let mut msg = MSG::default();
@@ -45,10 +54,12 @@ pub fn run() -> windows::core::Result<()> {
         }
     }
 
+    crate::diagnostics::log("app", "message loop exited");
     Ok(())
 }
 
 pub fn shutdown() {
+    crate::diagnostics::log("app", "shutdown");
     usage::shutdown();
     drawing::shutdown();
 }
