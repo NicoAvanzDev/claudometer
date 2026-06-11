@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::System::RemoteDesktop::{
     WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
@@ -13,9 +13,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, GetWindowLongPtrW, KillTimer, PostQuitMessage,
     SetLayeredWindowAttributes, SetTimer, SetWindowLongPtrW, SetWindowPos, CREATESTRUCTW,
     GWLP_USERDATA, GWL_EXSTYLE, HWND_TOP, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-    WINDOW_EX_STYLE,
-    WM_DESTROY, WM_NCCREATE, WM_PAINT, WM_TIMER, WM_WTSSESSION_CHANGE, WS_CHILD, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WTS_SESSION_UNLOCK,
+    WINDOW_EX_STYLE, WM_DESTROY, WM_ERASEBKGND, WM_NCCREATE, WM_PAINT, WM_TIMER,
+    WM_WTSSESSION_CHANGE, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WTS_SESSION_UNLOCK,
 };
 
 use crate::{drawing, usage, winstr};
@@ -86,12 +85,7 @@ pub fn create_for_taskbar(taskbar: HWND, class_name: PCWSTR, instance: HINSTANCE
         // surface that DWM stacks above it.
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
-        let _ = SetLayeredWindowAttributes(
-            hwnd,
-            windows::Win32::Foundation::COLORREF(0),
-            255,
-            LWA_ALPHA,
-        );
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
         position_over_taskbar(&*widget_ptr);
         let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
         let _ = SetTimer(hwnd, TIMER_ID, usage::TIMER_INTERVAL_MS, None);
@@ -138,9 +132,10 @@ pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             LRESULT(0)
         }
         WM_USAGE_UPDATED => {
-            let _ = InvalidateRect(hwnd, None, true);
+            let _ = InvalidateRect(hwnd, None, false);
             LRESULT(0)
         }
+        WM_ERASEBKGND => LRESULT(0),
         WM_PAINT => {
             drawing::paint(hwnd);
             LRESULT(0)

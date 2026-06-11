@@ -26,10 +26,10 @@ The Windows installer is built with [Inno Setup 6](https://jrsoftware.org/isinfo
 
 ```powershell
 cargo build --release
-iscc /DMyAppVersion=1.1.0 installer\claudometer.iss
+iscc /DMyAppVersion=1.1.1 installer\claudometer.iss
 ```
 
-The installer is written to `dist/Claudometer-Setup-1.1.0.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, and starts Claudometer automatically at sign-in through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+The installer is written to `dist/Claudometer-Setup-1.1.1.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, and starts Claudometer automatically at sign-in through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 GitHub Actions builds and uploads the installer automatically when a tagged GitHub release is published.
 
