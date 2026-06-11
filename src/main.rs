@@ -21,8 +21,32 @@ mod widget;
 mod winstr;
 
 #[cfg(target_os = "windows")]
-fn main() -> windows::core::Result<()> {
-    app::run()
+fn main() {
+    diagnostics::init();
+    diagnostics::install_exception_filter();
+    diagnostics::install_panic_hook();
+
+    let result = std::panic::catch_unwind(app::run);
+    match result {
+        Ok(Ok(())) => diagnostics::log("app", "process exited normally"),
+        Ok(Err(error)) => {
+            diagnostics::log("app", format!("process exited with error error={error:?}"));
+            shutdown_after_failure();
+            std::process::exit(1);
+        }
+        Err(_) => {
+            diagnostics::log("panic", "process terminated after panic reached main");
+            shutdown_after_failure();
+            std::process::exit(101);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn shutdown_after_failure() {
+    if std::panic::catch_unwind(app::shutdown).is_err() {
+        diagnostics::log("panic", "shutdown panicked after process failure");
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
