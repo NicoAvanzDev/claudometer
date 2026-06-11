@@ -29,7 +29,7 @@ cargo build --release
 iscc /DMyAppVersion=1.0.0 installer\claudometer.iss
 ```
 
-The installer is written to `dist/Claudometer-Setup-1.0.0.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, can optionally create a desktop shortcut, and can start Claudometer at sign-in.
+The installer is written to `dist/Claudometer-Setup-1.0.0.exe`. It installs per-user under `%LOCALAPPDATA%\Programs\Claudometer`, creates a Start Menu shortcut, and starts Claudometer automatically at sign-in through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 GitHub Actions builds and uploads the installer automatically when a tagged GitHub release is published.
 
