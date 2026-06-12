@@ -17,8 +17,8 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-    DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
+    DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
@@ -42,6 +42,7 @@ struct GraphicsContext {
     d2d_factory: ID2D1Factory,
     text_format: IDWriteTextFormat,
     small_text_format: IDWriteTextFormat,
+    reset_text_format: IDWriteTextFormat,
     percent_text_format: IDWriteTextFormat,
     icon: Option<usize>,
     light_taskbar: bool,
@@ -68,11 +69,30 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
     let dwrite_factory: IDWriteFactory =
         unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
 
-    let text_format = create_text_format(&dwrite_factory, 10.5, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-    let small_text_format =
-        create_text_format(&dwrite_factory, 11.0, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-    let percent_text_format =
-        create_text_format(&dwrite_factory, 10.5, DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+    let text_format = create_text_format(
+        &dwrite_factory,
+        10.5,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    )?;
+    let small_text_format = create_text_format(
+        &dwrite_factory,
+        11.0,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    )?;
+    let reset_text_format = create_text_format(
+        &dwrite_factory,
+        9.5,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+        DWRITE_FONT_WEIGHT_NORMAL,
+    )?;
+    let percent_text_format = create_text_format(
+        &dwrite_factory,
+        10.5,
+        DWRITE_TEXT_ALIGNMENT_TRAILING,
+        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    )?;
 
     let icon = unsafe {
         LoadImageW(
@@ -91,6 +111,7 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
         d2d_factory,
         text_format,
         small_text_format,
+        reset_text_format,
         percent_text_format,
         icon,
         light_taskbar: system_uses_light_theme(),
@@ -158,6 +179,7 @@ impl GraphicsContext {
     fn paint_d2d(&mut self, hwnd: HWND) -> windows::core::Result<()> {
         let text_format = self.text_format.clone();
         let small_text_format = self.small_text_format.clone();
+        let reset_text_format = self.reset_text_format.clone();
         let percent_text_format = self.percent_text_format.clone();
         let resources = self.resources_for(hwnd)?;
         let snapshot = usage::snapshot();
@@ -175,6 +197,7 @@ impl GraphicsContext {
             draw_usage_row(
                 resources,
                 &text_format,
+                &reset_text_format,
                 &percent_text_format,
                 "5h",
                 snapshot.session_percent,
@@ -186,6 +209,7 @@ impl GraphicsContext {
             draw_usage_row(
                 resources,
                 &text_format,
+                &reset_text_format,
                 &percent_text_format,
                 "7d",
                 snapshot.weekly_percent,
@@ -226,6 +250,7 @@ fn create_text_format(
     factory: &IDWriteFactory,
     size: f32,
     alignment: windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_ALIGNMENT,
+    weight: windows::Win32::Graphics::DirectWrite::DWRITE_FONT_WEIGHT,
 ) -> windows::core::Result<IDWriteTextFormat> {
     let face = winstr::wide("Segoe UI Variable");
     let locale = winstr::wide("en-us");
@@ -234,7 +259,7 @@ fn create_text_format(
         factory.CreateTextFormat(
             PCWSTR(face.as_ptr()),
             None,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            weight,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             size,
@@ -325,6 +350,7 @@ fn create_brush(
 fn draw_usage_row(
     resources: &WindowResources,
     text_format: &IDWriteTextFormat,
+    reset_format: &IDWriteTextFormat,
     percent_format: &IDWriteTextFormat,
     label: &str,
     percent: i32,
@@ -335,11 +361,21 @@ fn draw_usage_row(
 ) {
     draw_text(
         &resources.target,
-        &label_text(label, reset_label.as_deref()),
+        label,
         text_format,
-        rect(45.0, top, width - 48.0, top + 13.0),
+        rect(45.0, top, 65.0, top + 13.0),
         &resources.text_brush,
     );
+
+    if let Some(reset_label) = reset_label.as_deref() {
+        draw_text(
+            &resources.target,
+            &format!("\u{21ba} {reset_label}"),
+            reset_format,
+            rect(66.0, top + 0.5, width - 48.0, top + 13.5),
+            &resources.muted_text_brush,
+        );
+    }
 
     draw_text(
         &resources.target,
@@ -361,13 +397,6 @@ fn draw_usage_row(
             1.5,
             fill_brush,
         );
-    }
-}
-
-fn label_text(label: &str, reset_label: Option<&str>) -> String {
-    match reset_label {
-        Some(reset_label) => format!("{label} | \u{21bb} {reset_label}"),
-        None => label.to_owned(),
     }
 }
 
