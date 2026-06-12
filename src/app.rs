@@ -10,7 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HCURSOR, HICON, IDC_ARROW, IMAGE_ICON, LR_DEFAULTCOLOR, MSG, WNDCLASSW,
 };
 
-use crate::{drawing, taskbar, tray, usage, widget, winstr};
+use crate::{drawing, taskbar, tray, updates, usage, widget, winstr};
 
 const IDI_APP_32: usize = 110;
 
@@ -73,6 +73,8 @@ pub fn run() -> windows::core::Result<()> {
 
     crate::diagnostics::log("app", "starting initial usage fetch");
     usage::start_fetch_if_due(true);
+    crate::diagnostics::log("app", "starting initial update check");
+    updates::start_check_if_due(true);
 
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.into() {
@@ -115,6 +117,7 @@ impl Drop for SingleInstanceLock {
 
 pub fn shutdown() {
     crate::diagnostics::log("app", "shutdown");
+    updates::shutdown();
     tray::shutdown();
     usage::shutdown();
     drawing::shutdown();

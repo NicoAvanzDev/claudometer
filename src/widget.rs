@@ -178,6 +178,7 @@ pub unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             if wp.0 == TIMER_ID {
                 position_over_parent_taskbar(hwnd);
                 usage::start_fetch_if_due(false);
+                crate::updates::start_check_if_due(false);
             }
             LRESULT(0)
         }
