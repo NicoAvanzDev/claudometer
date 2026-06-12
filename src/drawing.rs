@@ -366,7 +366,7 @@ fn draw_usage_row(
 
 fn usage_text(percent: i32, reset_label: Option<&str>) -> String {
     match reset_label {
-        Some(reset_label) => format!("\u{21bb}{reset_label} | {percent}%"),
+        Some(reset_label) => format!("\u{21bb} {reset_label} | {percent}%"),
         None => format!("{percent}%"),
     }
 }
