@@ -19,7 +19,7 @@ use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
-    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
+    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
@@ -270,6 +270,7 @@ fn create_text_format(
     unsafe {
         format.SetTextAlignment(alignment)?;
         format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+        format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
     }
 
     Ok(format)
@@ -359,6 +360,8 @@ fn draw_usage_row(
     fill_brush: &ID2D1SolidColorBrush,
     width: f32,
 ) {
+    let clamped_percent = percent.clamp(0, 100);
+
     draw_text(
         &resources.target,
         label,
@@ -379,7 +382,7 @@ fn draw_usage_row(
 
     draw_text(
         &resources.target,
-        &format!("{percent}%"),
+        &format!("{clamped_percent}%"),
         percent_format,
         rect(width - 47.0, top, width - 8.0, top + 13.0),
         &resources.text_brush,
@@ -388,8 +391,7 @@ fn draw_usage_row(
     let track = rect(45.0, top + 14.5, width - 8.0, top + 17.5);
     fill_rounded(&resources.target, track, 1.5, &resources.track_brush);
 
-    let clamped = percent.clamp(0, 100) as f32;
-    let bar_width = (track.right - track.left) * (clamped / 100.0);
+    let bar_width = (track.right - track.left) * (clamped_percent as f32 / 100.0);
     if bar_width > 0.0 {
         fill_rounded(
             &resources.target,
