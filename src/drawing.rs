@@ -341,13 +341,12 @@ fn draw_usage_row(
         &resources.text_brush,
     );
 
-    draw_usage_value(
-        resources,
+    draw_text(
+        &resources.target,
+        &usage_text(percent, reset_label.as_deref()),
         percent_format,
-        percent,
-        reset_label.as_deref(),
-        top,
-        width,
+        rect(76.0, top, width - 8.0, top + 13.0),
+        &resources.text_brush,
     );
 
     let track = rect(45.0, top + 14.5, width - 8.0, top + 17.5);
@@ -365,43 +364,11 @@ fn draw_usage_row(
     }
 }
 
-fn draw_usage_value(
-    resources: &WindowResources,
-    percent_format: &IDWriteTextFormat,
-    percent: i32,
-    reset_label: Option<&str>,
-    top: f32,
-    width: f32,
-) {
-    let percent_left = width - 39.0;
-    let separator_left = percent_left - 8.0;
-    let separator_right = percent_left - 2.0;
-
-    if let Some(reset_label) = reset_label {
-        draw_text(
-            &resources.target,
-            &format!("\u{21bb} {reset_label}"),
-            percent_format,
-            rect(76.0, top, separator_left - 3.0, top + 13.0),
-            &resources.text_brush,
-        );
-
-        draw_text(
-            &resources.target,
-            "|",
-            percent_format,
-            rect(separator_left, top, separator_right, top + 13.0),
-            &resources.text_brush,
-        );
+fn usage_text(percent: i32, reset_label: Option<&str>) -> String {
+    match reset_label {
+        Some(reset_label) => format!("\u{21bb} {reset_label:<3} |{percent:>3}%"),
+        None => format!("{percent}%"),
     }
-
-    draw_text(
-        &resources.target,
-        &format!("{percent}%"),
-        percent_format,
-        rect(percent_left, top, width - 8.0, top + 13.0),
-        &resources.text_brush,
-    );
 }
 
 fn draw_text(
