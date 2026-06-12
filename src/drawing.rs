@@ -83,7 +83,7 @@ pub fn init(instance: HINSTANCE) -> windows::core::Result<()> {
     )?;
     let reset_text_format = create_text_format(
         &dwrite_factory,
-        10.0,
+        10.5,
         DWRITE_TEXT_ALIGNMENT_LEADING,
         DWRITE_FONT_WEIGHT_NORMAL,
     )?;
