@@ -6,13 +6,15 @@ use once_cell::sync::Lazy;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, POINT};
 use windows::Win32::UI::Shell::{
-    Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
+    ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO,
+    NIIF_RESPECT_QUIET_TIME, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NIN_BALLOONUSERCLICK,
     NIN_SELECT, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos, LoadImageW,
     SetForegroundWindow, TrackPopupMenu, HICON, IMAGE_ICON, LR_DEFAULTCOLOR, MF_SEPARATOR,
-    MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP,
+    MF_STRING, SW_NORMAL, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CONTEXTMENU, WM_LBUTTONUP,
+    WM_RBUTTONUP,
 };
 
 use crate::{diagnostics, widget, winstr};
@@ -30,6 +32,7 @@ static TRAY: Lazy<Mutex<Option<TrayIcon>>> = Lazy::new(|| Mutex::new(None));
 struct TrayIcon {
     hwnd: usize,
     icon: Option<usize>,
+    update_url: Option<String>,
 }
 
 pub fn init(hwnd: HWND, instance: HINSTANCE) {
@@ -71,8 +74,37 @@ pub fn init(hwnd: HWND, instance: HINSTANCE) {
     *guard = Some(TrayIcon {
         hwnd: hwnd.0 as usize,
         icon,
+        update_url: None,
     });
     diagnostics::log("tray", "tray icon added");
+}
+
+pub fn show_update_available(version: &str, url: &str) {
+    let mut guard = TRAY.lock().expect("tray mutex poisoned");
+    let Some(tray) = guard.as_mut() else {
+        diagnostics::log("tray", "update notification skipped no tray icon");
+        return;
+    };
+
+    tray.update_url = Some(url.to_owned());
+
+    let mut data = notify_data(HWND(tray.hwnd as *mut _), tray.icon);
+    data.uFlags |= NIF_INFO;
+    data.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+    copy_wide_truncated(&mut data.szInfoTitle, "Claudometer update available");
+    copy_wide_truncated(
+        &mut data.szInfo,
+        &format!("Version {version} is ready to download. Click to open GitHub Releases."),
+    );
+
+    if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data).as_bool() } {
+        diagnostics::log(
+            "tray",
+            format!("update notification shown version={version}"),
+        );
+    } else {
+        diagnostics::log("tray", "failed to show update notification");
+    }
 }
 
 pub fn shutdown() {
@@ -99,6 +131,8 @@ pub fn handle_message(hwnd: HWND, lp: LPARAM) {
         || event == WM_CONTEXTMENU
     {
         show_menu(hwnd);
+    } else if event == NIN_BALLOONUSERCLICK {
+        open_update_url(hwnd);
     }
 }
 
@@ -198,4 +232,35 @@ fn open_logs_folder() {
     if let Err(error) = Command::new("explorer").arg(&folder).spawn() {
         diagnostics::log("tray", format!("open logs failed error={error}"));
     }
+}
+
+fn open_update_url(hwnd: HWND) {
+    let url = TRAY
+        .lock()
+        .expect("tray mutex poisoned")
+        .as_ref()
+        .and_then(|tray| tray.update_url.clone())
+        .unwrap_or_else(|| {
+            "https://github.com/NicoAvanzDev/claudometer/releases/latest".to_owned()
+        });
+
+    diagnostics::log("tray", format!("open update url url={url}"));
+    let operation = winstr::wide("open");
+    let target = winstr::wide(&url);
+    unsafe {
+        let _ = ShellExecuteW(
+            hwnd,
+            PCWSTR(operation.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_NORMAL,
+        );
+    }
+}
+
+fn copy_wide_truncated<const N: usize>(target: &mut [u16; N], value: &str) {
+    let wide = winstr::wide(value);
+    let len = wide.len().min(target.len());
+    target[..len].copy_from_slice(&wide[..len]);
 }
