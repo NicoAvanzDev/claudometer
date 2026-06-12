@@ -363,7 +363,7 @@ fn draw_usage_row(
         &resources.target,
         label,
         text_format,
-        rect(45.0, top, 65.0, top + 13.0),
+        rect(45.0, top, 62.0, top + 13.0),
         &resources.text_brush,
     );
 
@@ -372,7 +372,7 @@ fn draw_usage_row(
             &resources.target,
             &format!("\u{21ba} {reset_label}"),
             reset_format,
-            rect(66.0, top + 0.5, width - 48.0, top + 13.5),
+            rect(62.0, top + 0.5, width - 48.0, top + 13.5),
             &resources.muted_text_brush,
         );
     }
