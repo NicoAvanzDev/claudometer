@@ -178,6 +178,7 @@ impl GraphicsContext {
                 &percent_text_format,
                 "5h",
                 snapshot.session_percent,
+                usage::session_reset_label(snapshot.session_reset_minutes),
                 SESSION_ROW_TOP,
                 &resources.session_brush,
                 size.width,
@@ -188,6 +189,7 @@ impl GraphicsContext {
                 &percent_text_format,
                 "7d",
                 snapshot.weekly_percent,
+                usage::weekly_reset_label(snapshot.weekly_reset_minutes),
                 WEEKLY_ROW_TOP,
                 &resources.weekly_brush,
                 size.width,
@@ -326,6 +328,7 @@ fn draw_usage_row(
     percent_format: &IDWriteTextFormat,
     label: &str,
     percent: i32,
+    reset_label: Option<String>,
     top: f32,
     fill_brush: &ID2D1SolidColorBrush,
     width: f32,
@@ -340,7 +343,7 @@ fn draw_usage_row(
 
     draw_text(
         &resources.target,
-        &format!("{percent}%"),
+        &usage_text(percent, reset_label.as_deref()),
         percent_format,
         rect(76.0, top, width - 8.0, top + 13.0),
         &resources.text_brush,
@@ -358,6 +361,13 @@ fn draw_usage_row(
             1.5,
             fill_brush,
         );
+    }
+}
+
+fn usage_text(percent: i32, reset_label: Option<&str>) -> String {
+    match reset_label {
+        Some(reset_label) => format!("\u{21bb}{reset_label} | {percent}%"),
+        None => format!("{percent}%"),
     }
 }
 

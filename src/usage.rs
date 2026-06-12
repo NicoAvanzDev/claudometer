@@ -49,6 +49,28 @@ pub fn snapshot() -> UsageSnapshot {
     USAGE.lock().expect("usage mutex poisoned").clone()
 }
 
+pub fn session_reset_label(minutes: i32) -> Option<String> {
+    if minutes <= 0 {
+        return None;
+    }
+
+    if minutes < 60 {
+        return Some(format!("{minutes}m"));
+    }
+
+    Some(format!("{}h", ((minutes + 30) / 60).max(1)))
+}
+
+pub fn weekly_reset_label(minutes: i32) -> Option<String> {
+    if minutes <= 0 {
+        return None;
+    }
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    let reset_at = now.as_secs().saturating_add(minutes as u64 * 60);
+    Some(weekday_label_from_unix_seconds(reset_at).to_owned())
+}
+
 pub fn refresh_auth_on_startup() {
     let agent = match build_agent() {
         Ok(agent) => agent,
@@ -301,6 +323,13 @@ fn reset_minutes_from_header(response: &Response, name: &str) -> i32 {
     }
 }
 
+fn weekday_label_from_unix_seconds(seconds: u64) -> &'static str {
+    const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    let days_since_epoch = seconds / 86_400;
+    let sunday_based_index = (days_since_epoch + 4) % 7;
+    WEEKDAYS[sunday_based_index as usize]
+}
+
 fn log_response_headers(response: &Response) {
     crate::diagnostics::log(
         "usage",
@@ -323,4 +352,23 @@ fn log_response_headers(response: &Response) {
                 .unwrap_or("<missing>")
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{session_reset_label, weekday_label_from_unix_seconds};
+
+    #[test]
+    fn formats_session_reset_compactly() {
+        assert_eq!(session_reset_label(0), None);
+        assert_eq!(session_reset_label(12), Some("12m".to_owned()));
+        assert_eq!(session_reset_label(89), Some("1h".to_owned()));
+        assert_eq!(session_reset_label(90), Some("2h".to_owned()));
+    }
+
+    #[test]
+    fn derives_weekday_from_unix_seconds() {
+        assert_eq!(weekday_label_from_unix_seconds(0), "Thu");
+        assert_eq!(weekday_label_from_unix_seconds(3 * 86_400), "Sun");
+    }
 }
