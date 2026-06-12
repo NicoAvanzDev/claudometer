@@ -9,17 +9,20 @@ A native Windows taskbar overlay widget written in Rust that displays Claude Cod
 
 ## Features
 
-- **Minimal overlay**: Embeds directly in the Windows taskbar, always visible and never obstructive
-- **Real-time updates**: Refreshes usage stats on a configurable interval
-- **Lock/unlock awareness**: Detects session lock/unlock events and fetches fresh data when the workstation unlocks
-- **Multi-monitor support**: Works across all taskbars on multi-display setups
-- **Zero external dependencies**: Uses only Win32 APIs and Rust's std library
+- **Native taskbar overlay**: Embeds directly in the Windows taskbar instead of floating above it
+- **Claude Code usage meter**: Shows 5-hour session and 7-day weekly utilization from Anthropic rate-limit headers
+- **Reset hints**: Displays compact reset labels for the current session and weekly window
+- **Background refresh**: Polls usage every 5 minutes and refreshes after workstation unlock
+- **Multi-monitor support**: Creates a widget for each detected Windows taskbar
+- **Tray controls**: Provides quick reload, log folder access, and quit actions from the notification area
+- **Update notifications**: Checks the latest GitHub release hourly and opens the release page when clicked
 
 ## Building
 
-Requires Windows 10+ with the MSVC Rust toolchain:
+Requires Windows 10+ with the MSVC Rust toolchain. From Developer PowerShell or another shell with the MSVC Rust toolchain available:
 
 ```powershell
+cargo build
 cargo build --release
 ```
 
@@ -45,12 +48,16 @@ GitHub Actions builds and uploads the installer automatically when a tagged GitH
 The app is organized into focused modules:
 
 - **`app.rs`**: Application lifecycle, window class registration, message loop
+- **`credentials.rs`**: Claude Code credential discovery and OAuth token refresh
+- **`diagnostics.rs`**: Local logging, panic hooks, and crash diagnostics
+- **`drawing.rs`**: Direct2D rendering: icon, usage bars, reset labels, and status text
 - **`taskbar.rs`**: Taskbar window discovery (`Shell_TrayWnd`, secondary taskbars)
-- **`widget.rs`**: Widget window creation, positioning, and message handling
-- **`drawing.rs`**: Direct2D rendering: icon, usage bars, text labels
+- **`tray.rs`**: Notification area icon, context menu, update balloon handling
+- **`updates.rs`**: GitHub release checks
 - **`usage.rs`**: API polling and usage snapshot management
-- **`credentials.rs`**: Secure credential storage and retrieval
 - **`main.rs`**: Entry point, error handling
+- **`widget.rs`**: Widget window creation, positioning, timers, and message handling
+- **`winstr.rs`**: UTF-16 string helpers for Win32 APIs
 
 ## Widget Z-Order Fix (Windows 11 Compatibility)
 
@@ -62,15 +69,35 @@ The widget is embedded as a true child of `Shell_TrayWnd` (the taskbar window), 
 
 ## Configuration
 
-No configuration file is needed. The widget:
+No Claudometer configuration file is needed. The widget:
+
 - Fetches usage stats every 5 minutes
+- Checks for new GitHub releases every hour
 - Polls for new data on session unlock
 - Positions itself in the taskbar's left corner (horizontal) or top corner (vertical, for pinned taskbars)
 - Uses the Claude Code branding icon and color scheme (orange for session, blue for weekly)
 
 ## API Integration
 
-The widget fetches usage data from the Claude Code backend using a stored access token. Tokens are stored securely using Windows credential storage APIs (`CredentialManager`). On first launch or after token expiry, the app will prompt for re-authentication.
+Claudometer reads the local Claude Code OAuth credential and uses it to make a minimal request to Anthropic's Messages API. It derives usage from the `anthropic-ratelimit-unified-5h-*` and `anthropic-ratelimit-unified-7d-*` response headers.
+
+Credential lookup order:
+
+1. `CLAUDE_CREDENTIALS_PATH`, when set
+2. `CLAUDE_CONFIG_DIR\.credentials.json`, when set
+3. `%USERPROFILE%\.claude\.credentials.json`
+4. `%LOCALAPPDATA%\Claude\.credentials.json`
+5. `%APPDATA%\Claude\.credentials.json`
+
+If the credential contains a refresh token and expiry timestamp, Claudometer refreshes the access token shortly before expiry. If no usable credential is found, the widget shows a `no token` status. Sign in with Claude Code first, then reload Claudometer from the tray menu.
+
+## Tray Menu
+
+The notification area icon exposes:
+
+- **Reload widget**: Recreates widgets and starts a fresh usage fetch
+- **Open logs folder**: Opens the local `logs` directory next to the executable
+- **Quit**: Removes the tray icon and destroys the widgets
 
 ## Verification
 
@@ -79,12 +106,13 @@ After building, run the release binary and observe:
 1. The widget appears on all detected taskbars
 2. It displays current usage percentages (or a loading/error state)
 3. Clicking taskbar items does not cause the widget to disappear
-4. Usage data refreshes after 5 minutes or on session unlock
+4. The tray menu can reload the widget and open the log folder
+5. Usage data refreshes after 5 minutes or on session unlock
 
 For debugging:
 
 - Monitor the release binary process in Task Manager (`claudometer.exe`)
-- Check Windows Event Viewer for any critical errors
+- Check `logs\claudometer.log` next to the executable
 - Verify taskbar window handles with Win32 inspection tools
 
 ## Notes
@@ -92,3 +120,4 @@ For debugging:
 - The app exits when the taskbar is destroyed (e.g., Explorer crash/restart). To recover, simply relaunch it.
 - The widget's message queue is attached to Explorer's, so a hang in the widget's window procedure could hang the taskbar. The procedure is minimal (timers and Direct2D painting) so this is not a practical concern.
 - Multi-monitor support is automatic; the app discovers all taskbars on startup and creates a widget for each.
+- A single-instance mutex prevents duplicate Claudometer processes from starting.
