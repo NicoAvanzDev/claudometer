@@ -2,7 +2,7 @@
 #define MyAppPublisher "NicoAvanzDev"
 #define MyAppExeName "claudometer.exe"
 #ifndef MyAppVersion
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.6.0"
 #endif
 
 [Setup]

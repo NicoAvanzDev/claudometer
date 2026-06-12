@@ -191,6 +191,11 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
 
     let response = match send_usage_request(&agent, &token) {
         UsageResponse::Ok(response) => response,
+        UsageResponse::RateLimited(response) => {
+            apply_rate_limit_snapshot(snapshot, &response);
+            log_response_headers(&response);
+            return true;
+        }
         UsageResponse::AuthRejected => {
             snapshot.status = "login".to_owned();
             snapshot.ok = false;
@@ -227,6 +232,7 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
 
 enum UsageResponse {
     Ok(Response),
+    RateLimited(Response),
     AuthRejected,
     HttpError(u16),
     Failed,
@@ -259,6 +265,8 @@ fn send_usage_request(agent: &ureq::Agent, token: &str) -> UsageResponse {
             crate::diagnostics::log("usage", format!("api response error status={code}"));
             if code == 401 || code == 403 {
                 UsageResponse::AuthRejected
+            } else if code == 429 {
+                UsageResponse::RateLimited(response)
             } else {
                 let _ = response.into_string();
                 UsageResponse::HttpError(code)
@@ -271,6 +279,31 @@ fn send_usage_request(agent: &ureq::Agent, token: &str) -> UsageResponse {
     }
 }
 
+fn apply_rate_limit_snapshot(snapshot: &mut UsageSnapshot, response: &Response) {
+    snapshot.session_percent =
+        percent_from_header_or(response, "anthropic-ratelimit-unified-5h-utilization", 100);
+    snapshot.weekly_percent =
+        percent_from_header_or(response, "anthropic-ratelimit-unified-7d-utilization", 0);
+    snapshot.session_reset_minutes = retry_after_minutes(response)
+        .or_else(|| {
+            reset_minutes_from_first_header(
+                response,
+                &[
+                    "anthropic-ratelimit-unified-5h-reset",
+                    "anthropic-ratelimit-unified-reset",
+                ],
+            )
+        })
+        .unwrap_or(0);
+    snapshot.weekly_reset_minutes =
+        reset_minutes_from_header(response, "anthropic-ratelimit-unified-7d-reset");
+    snapshot.status = response
+        .header("anthropic-ratelimit-unified-5h-status")
+        .unwrap_or("limited")
+        .to_owned();
+    snapshot.ok = true;
+}
+
 fn build_agent() -> Result<ureq::Agent, ureq::native_tls::Error> {
     let tls_connector = ureq::native_tls::TlsConnector::new()?;
     Ok(AgentBuilder::new()
@@ -278,6 +311,23 @@ fn build_agent() -> Result<ureq::Agent, ureq::native_tls::Error> {
         .timeout(Duration::from_secs(20))
         .tls_connector(Arc::new(tls_connector))
         .build())
+}
+
+fn percent_from_header_or(response: &Response, name: &str, fallback: i32) -> i32 {
+    let Some(value) = response.header(name) else {
+        crate::diagnostics::log("usage", format!("missing response header name={name}"));
+        return fallback;
+    };
+
+    let Ok(utilization) = value.parse::<f64>() else {
+        crate::diagnostics::log(
+            "usage",
+            format!("invalid percent header name={name} value={value}"),
+        );
+        return fallback;
+    };
+
+    percent_from_utilization(utilization)
 }
 
 fn percent_from_header(response: &Response, name: &str) -> i32 {
@@ -294,6 +344,10 @@ fn percent_from_header(response: &Response, name: &str) -> i32 {
         return 0;
     };
 
+    percent_from_utilization(utilization)
+}
+
+fn percent_from_utilization(utilization: f64) -> i32 {
     ((utilization * 100.0) + 0.5).floor().clamp(0.0, 999.0) as i32
 }
 
@@ -303,24 +357,161 @@ fn reset_minutes_from_header(response: &Response, name: &str) -> i32 {
         return 0;
     };
 
-    let Ok(reset_at) = value.parse::<f64>() else {
+    reset_minutes_from_value(name, value).unwrap_or(0)
+}
+
+fn reset_minutes_from_first_header(response: &Response, names: &[&str]) -> Option<i32> {
+    for name in names {
+        if let Some(value) = response.header(name) {
+            return reset_minutes_from_value(name, value);
+        }
+    }
+
+    crate::diagnostics::log(
+        "usage",
+        format!("missing response headers names={}", names.join(",")),
+    );
+    None
+}
+
+fn reset_minutes_from_value(name: &str, value: &str) -> Option<i32> {
+    let Some(reset_at) = unix_seconds_from_reset_value(value) else {
         crate::diagnostics::log(
             "usage",
             format!("invalid reset header name={name} value={value}"),
         );
-        return 0;
+        return None;
     };
 
     let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
-        return 0;
+        return None;
     };
 
-    let minutes = (reset_at - now.as_secs_f64()) / 60.0;
+    let minutes = (reset_at as f64 - now.as_secs_f64()) / 60.0;
     if minutes > 0.0 {
-        (minutes + 0.5).floor() as i32
+        Some((minutes + 0.5).floor() as i32)
+    } else {
+        Some(0)
+    }
+}
+
+fn retry_after_minutes(response: &Response) -> Option<i32> {
+    let value = response.header("retry-after")?;
+    retry_after_minutes_from_value(value)
+}
+
+fn retry_after_minutes_from_value(value: &str) -> Option<i32> {
+    let seconds = value.parse::<f64>().ok()?;
+    if seconds > 0.0 {
+        Some((seconds / 60.0 + 0.5).floor().max(1.0) as i32)
+    } else {
+        Some(0)
+    }
+}
+
+fn unix_seconds_from_reset_value(value: &str) -> Option<i64> {
+    if let Ok(seconds) = value.parse::<f64>() {
+        return Some(seconds as i64);
+    }
+
+    unix_seconds_from_rfc3339(value)
+}
+
+fn unix_seconds_from_rfc3339(value: &str) -> Option<i64> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20 {
+        return None;
+    }
+
+    let year = parse_digits(value, 0, 4)?;
+    let month = parse_digits(value, 5, 7)?;
+    let day = parse_digits(value, 8, 10)?;
+    let hour = parse_digits(value, 11, 13)?;
+    let minute = parse_digits(value, 14, 16)?;
+    let second = parse_digits(value, 17, 19)?;
+
+    if bytes.get(4) != Some(&b'-')
+        || bytes.get(7) != Some(&b'-')
+        || !matches!(bytes.get(10), Some(b'T') | Some(b't'))
+        || bytes.get(13) != Some(&b':')
+        || bytes.get(16) != Some(&b':')
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    let mut index = 19;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while matches!(bytes.get(index), Some(b'0'..=b'9')) {
+            index += 1;
+        }
+        if index == fraction_start {
+            return None;
+        }
+    }
+
+    let offset_seconds = match bytes.get(index) {
+        Some(b'Z') | Some(b'z') if index + 1 == bytes.len() => 0,
+        Some(b'+') | Some(b'-') if index + 6 == bytes.len() => {
+            let sign = if bytes[index] == b'+' { 1 } else { -1 };
+            if bytes.get(index + 3) != Some(&b':') {
+                return None;
+            }
+            let offset_hour = parse_digits(value, index + 1, index + 3)?;
+            let offset_minute = parse_digits(value, index + 4, index + 6)?;
+            if offset_hour > 23 || offset_minute > 59 {
+                return None;
+            }
+            sign * ((offset_hour * 60 + offset_minute) * 60)
+        }
+        _ => return None,
+    };
+
+    let days = days_from_civil(year, month, day)?;
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second - offset_seconds)
+}
+
+fn parse_digits(value: &str, start: usize, end: usize) -> Option<i64> {
+    value.get(start..end)?.parse().ok()
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    const DAYS_BEFORE_MONTH: [i64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => return None,
+    };
+
+    if day < 1 || day > days_in_month {
+        return None;
+    }
+
+    let years_before = year - 1;
+    let leap_days_before_year = years_before / 4 - years_before / 100 + years_before / 400;
+    let days_before_year = years_before * 365 + leap_days_before_year;
+    let leap_day = if month > 2 && is_leap_year(year) {
+        1
     } else {
         0
-    }
+    };
+    let days_since_year_zero =
+        days_before_year + DAYS_BEFORE_MONTH[(month - 1) as usize] + leap_day + day - 1;
+
+    Some(days_since_year_zero - 719_162)
+}
+
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 fn weekday_label_from_unix_seconds(seconds: u64) -> &'static str {
@@ -352,11 +543,24 @@ fn log_response_headers(response: &Response) {
                 .unwrap_or("<missing>")
         ),
     );
+    crate::diagnostics::log(
+        "usage",
+        format!(
+            "retry headers retry_after={} requests_limit={}",
+            response.header("retry-after").unwrap_or("<missing>"),
+            response
+                .header("anthropic-ratelimit-requests-limit")
+                .unwrap_or("<missing>")
+        ),
+    );
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{session_reset_label, weekday_label_from_unix_seconds};
+    use super::{
+        retry_after_minutes_from_value, session_reset_label, unix_seconds_from_reset_value,
+        weekday_label_from_unix_seconds,
+    };
 
     #[test]
     fn formats_session_reset_compactly() {
@@ -370,5 +574,29 @@ mod tests {
     fn derives_weekday_from_unix_seconds() {
         assert_eq!(weekday_label_from_unix_seconds(0), "Thu");
         assert_eq!(weekday_label_from_unix_seconds(3 * 86_400), "Sun");
+    }
+
+    #[test]
+    fn parses_reset_values() {
+        assert_eq!(
+            unix_seconds_from_reset_value("1764554400"),
+            Some(1_764_554_400)
+        );
+        assert_eq!(
+            unix_seconds_from_reset_value("2025-12-01T06:00:00Z"),
+            Some(1_764_568_800)
+        );
+        assert_eq!(
+            unix_seconds_from_reset_value("2025-12-01T07:00:00+01:00"),
+            Some(1_764_568_800)
+        );
+    }
+
+    #[test]
+    fn parses_retry_after_minutes() {
+        assert_eq!(retry_after_minutes_from_value("0"), Some(0));
+        assert_eq!(retry_after_minutes_from_value("1"), Some(1));
+        assert_eq!(retry_after_minutes_from_value("89"), Some(1));
+        assert_eq!(retry_after_minutes_from_value("90"), Some(2));
     }
 }
