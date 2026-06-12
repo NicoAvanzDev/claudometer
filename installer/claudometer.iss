@@ -2,7 +2,7 @@
 #define MyAppPublisher "NicoAvanzDev"
 #define MyAppExeName "claudometer.exe"
 #ifndef MyAppVersion
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.6.1"
 #endif
 
 [Setup]
@@ -23,10 +23,10 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
-CloseApplications=yes
+CloseApplications=force
 
 [Files]
-Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; BeforeInstall: StopRunningApp
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -36,3 +36,25 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure StopRunningApp;
+var
+  ResultCode: Integer;
+begin
+  if Exec(
+    ExpandConstant('{sys}\taskkill.exe'),
+    '/IM "{#MyAppExeName}" /T /F',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  ) then begin
+    if ResultCode = 0 then
+      Log('{#MyAppName} running process stopped before install')
+    else
+      Log(Format('{#MyAppName} stop command exited with code %d', [ResultCode]));
+  end else begin
+    Log('{#MyAppName} stop command could not be started');
+  end;
+end;
