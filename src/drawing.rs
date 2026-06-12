@@ -359,6 +359,8 @@ fn draw_usage_row(
     fill_brush: &ID2D1SolidColorBrush,
     width: f32,
 ) {
+    let clamped_percent = percent.clamp(0, 100);
+
     draw_text(
         &resources.target,
         label,
@@ -379,7 +381,7 @@ fn draw_usage_row(
 
     draw_text(
         &resources.target,
-        &format!("{percent}%"),
+        &format!("{clamped_percent}%"),
         percent_format,
         rect(width - 47.0, top, width - 8.0, top + 13.0),
         &resources.text_brush,
@@ -388,8 +390,7 @@ fn draw_usage_row(
     let track = rect(45.0, top + 14.5, width - 8.0, top + 17.5);
     fill_rounded(&resources.target, track, 1.5, &resources.track_brush);
 
-    let clamped = percent.clamp(0, 100) as f32;
-    let bar_width = (track.right - track.left) * (clamped / 100.0);
+    let bar_width = (track.right - track.left) * (clamped_percent as f32 / 100.0);
     if bar_width > 0.0 {
         fill_rounded(
             &resources.target,
