@@ -335,17 +335,17 @@ fn draw_usage_row(
 ) {
     draw_text(
         &resources.target,
-        label,
+        &label_text(label, reset_label.as_deref()),
         text_format,
-        rect(45.0, top, 74.0, top + 13.0),
+        rect(45.0, top, width - 48.0, top + 13.0),
         &resources.text_brush,
     );
 
     draw_text(
         &resources.target,
-        &usage_text(percent, reset_label.as_deref()),
+        &format!("{percent}%"),
         percent_format,
-        rect(76.0, top, width - 8.0, top + 13.0),
+        rect(width - 47.0, top, width - 8.0, top + 13.0),
         &resources.text_brush,
     );
 
@@ -364,15 +364,11 @@ fn draw_usage_row(
     }
 }
 
-fn usage_text(percent: i32, reset_label: Option<&str>) -> String {
+fn label_text(label: &str, reset_label: Option<&str>) -> String {
     match reset_label {
-        Some(reset_label) => format!("\u{21bb} {reset_label:<3} |{}", percent_text(percent)),
-        None => format!("{percent}%"),
+        Some(reset_label) => format!("{label} | \u{21bb} {reset_label}"),
+        None => label.to_owned(),
     }
-}
-
-fn percent_text(percent: i32) -> String {
-    format!("{percent:>3}%").replace(' ', "\u{2007}")
 }
 
 fn draw_text(
