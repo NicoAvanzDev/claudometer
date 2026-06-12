@@ -49,6 +49,22 @@ pub fn snapshot() -> UsageSnapshot {
     USAGE.lock().expect("usage mutex poisoned").clone()
 }
 
+pub fn refresh_auth_on_startup() {
+    let agent = match build_agent() {
+        Ok(agent) => agent,
+        Err(_) => {
+            crate::diagnostics::log("usage", "startup auth refresh skipped http init failed");
+            return;
+        }
+    };
+
+    if credentials::refresh_claude_token_if_due(&agent).is_some() {
+        crate::diagnostics::log("usage", "startup auth refresh check finished");
+    } else {
+        crate::diagnostics::log("usage", "startup auth refresh check failed");
+    }
+}
+
 pub fn start_fetch_if_due(force: bool) {
     if crate::app::is_workstation_locked() {
         crate::diagnostics::log("usage", "fetch skipped workstation locked");
@@ -130,6 +146,16 @@ fn update_usage_state(snapshot: UsageSnapshot) {
 }
 
 fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
+    let agent = match build_agent() {
+        Ok(agent) => agent,
+        Err(_) => {
+            snapshot.status = "http init".to_owned();
+            snapshot.ok = false;
+            crate::diagnostics::log("usage", "http client initialization failed");
+            return false;
+        }
+    };
+
     let Some(token) = credentials::read_claude_token() else {
         snapshot.status = "no token".to_owned();
         snapshot.ok = false;
@@ -141,52 +167,21 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
         format!("token loaded token_chars={}", token.chars().count()),
     );
 
-    let agent = match build_agent() {
-        Ok(agent) => agent,
-        Err(_) => {
-            snapshot.status = "http init".to_owned();
+    let response = match send_usage_request(&agent, &token) {
+        UsageResponse::Ok(response) => response,
+        UsageResponse::AuthRejected => {
+            snapshot.status = "login".to_owned();
             snapshot.ok = false;
-            crate::diagnostics::log("usage", "http client initialization failed");
             return false;
         }
-    };
-
-    let body = r#"{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#;
-    crate::diagnostics::log(
-        "usage",
-        "api request start method=POST url=https://api.anthropic.com/v1/messages model=claude-haiku-4-5-20251001",
-    );
-    let response = agent
-        .post("https://api.anthropic.com/v1/messages")
-        .set("anthropic-version", "2023-06-01")
-        .set("anthropic-beta", "oauth-2025-04-20")
-        .set("content-type", "application/json")
-        .set("user-agent", "claude-code/2.1.5")
-        .set("authorization", &format!("Bearer {token}"))
-        .send_string(body);
-
-    let response = match response {
-        Ok(response) => {
-            crate::diagnostics::log(
-                "usage",
-                format!("api response ok status={}", response.status()),
-            );
-            response
-        }
-        Err(ureq::Error::Status(code, response)) => {
-            crate::diagnostics::log("usage", format!("api response error status={code}"));
-            if code == 401 || code == 403 {
-                snapshot.status = "login".to_owned();
-            } else {
-                snapshot.status = format!("api {code}");
-            }
+        UsageResponse::HttpError(status) => {
+            snapshot.status = format!("api {status}");
             snapshot.ok = false;
-            return response.status() < 400;
+            return false;
         }
-        Err(error) => {
+        UsageResponse::Failed => {
             snapshot.status = "http failed".to_owned();
             snapshot.ok = false;
-            crate::diagnostics::log("usage", format!("api request failed error={error}"));
             return false;
         }
     };
@@ -206,6 +201,52 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
     snapshot.ok = true;
     log_response_headers(&response);
     true
+}
+
+enum UsageResponse {
+    Ok(Response),
+    AuthRejected,
+    HttpError(u16),
+    Failed,
+}
+
+fn send_usage_request(agent: &ureq::Agent, token: &str) -> UsageResponse {
+    let body = r#"{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#;
+    crate::diagnostics::log(
+        "usage",
+        "api request start method=POST url=https://api.anthropic.com/v1/messages model=claude-haiku-4-5-20251001",
+    );
+    let response = agent
+        .post("https://api.anthropic.com/v1/messages")
+        .set("anthropic-version", "2023-06-01")
+        .set("anthropic-beta", "oauth-2025-04-20")
+        .set("content-type", "application/json")
+        .set("user-agent", "claude-code/2.1.5")
+        .set("authorization", &format!("Bearer {token}"))
+        .send_string(body);
+
+    match response {
+        Ok(response) => {
+            crate::diagnostics::log(
+                "usage",
+                format!("api response ok status={}", response.status()),
+            );
+            UsageResponse::Ok(response)
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            crate::diagnostics::log("usage", format!("api response error status={code}"));
+            if code == 401 || code == 403 {
+                UsageResponse::AuthRejected
+            } else {
+                let _ = response.into_string();
+                UsageResponse::HttpError(code)
+            }
+        }
+        Err(error) => {
+            crate::diagnostics::log("usage", format!("api request failed error={error}"));
+            UsageResponse::Failed
+        }
+    }
 }
 
 fn build_agent() -> Result<ureq::Agent, ureq::native_tls::Error> {

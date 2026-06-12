@@ -21,6 +21,9 @@ pub fn run() -> windows::core::Result<()> {
         return Ok(());
     };
 
+    crate::diagnostics::log("app", "checking auth refresh on startup");
+    usage::refresh_auth_on_startup();
+
     let module = unsafe { GetModuleHandleW(None)? };
     let instance = HINSTANCE(module.0);
     let class_name = winstr::wide("ClaudometerOverlay");
