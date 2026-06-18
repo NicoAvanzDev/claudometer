@@ -15,18 +15,25 @@ struct ClaudeCredential {
     expires_at: Option<u64>,
 }
 
-pub fn read_claude_token() -> Option<String> {
-    read_claude_credential().map(|credential| credential.access_token)
-}
-
 pub fn refresh_claude_token_if_due(agent: &ureq::Agent) -> Option<String> {
     let credential = read_claude_credential()?;
     if !credential.should_refresh() {
-        crate::diagnostics::log("credentials", "startup token refresh skipped not due");
+        crate::diagnostics::log("credentials", "token refresh skipped not due");
         return Some(credential.access_token);
     }
 
-    refresh_credential(agent, credential)
+    let existing_token = credential.access_token.clone();
+    refresh_credential(agent, credential).or_else(|| {
+        crate::diagnostics::log(
+            "credentials",
+            "token refresh failed; using existing token until next fetch",
+        );
+        Some(existing_token)
+    })
+}
+
+pub fn force_refresh_claude_token(agent: &ureq::Agent) -> Option<String> {
+    refresh_credential(agent, read_claude_credential()?)
 }
 
 fn read_claude_credential() -> Option<ClaudeCredential> {
@@ -403,7 +410,19 @@ fn now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_access_token;
+    use std::path::PathBuf;
+
+    use super::{extract_access_token, now_ms, ClaudeCredential, REFRESH_SKEW_MS};
+
+    fn credential_expiring_at(expires_at: u64) -> ClaudeCredential {
+        ClaudeCredential {
+            path: PathBuf::new(),
+            root: serde_json::Value::Null,
+            access_token: "access-token".to_owned(),
+            refresh_token: Some("refresh-token".to_owned()),
+            expires_at: Some(expires_at),
+        }
+    }
 
     #[test]
     fn reads_nested_claude_oauth_token() {
@@ -426,5 +445,19 @@ mod tests {
         let token = "abcDE12345abcDE12345abcDE12345";
 
         assert_eq!(extract_access_token(token).as_deref(), Some(token));
+    }
+
+    #[test]
+    fn refreshes_tokens_near_expiry() {
+        let credential = credential_expiring_at(now_ms().saturating_add(REFRESH_SKEW_MS));
+
+        assert!(credential.should_refresh());
+    }
+
+    #[test]
+    fn keeps_tokens_that_are_not_near_expiry() {
+        let credential = credential_expiring_at(now_ms().saturating_add(REFRESH_SKEW_MS + 60_000));
+
+        assert!(!credential.should_refresh());
     }
 }
