@@ -71,22 +71,6 @@ pub fn weekly_reset_label(minutes: i32) -> Option<String> {
     Some(weekday_label_from_unix_seconds(reset_at).to_owned())
 }
 
-pub fn refresh_auth_on_startup() {
-    let agent = match build_agent() {
-        Ok(agent) => agent,
-        Err(_) => {
-            crate::diagnostics::log("usage", "startup auth refresh skipped http init failed");
-            return;
-        }
-    };
-
-    if credentials::refresh_claude_token_if_due(&agent).is_some() {
-        crate::diagnostics::log("usage", "startup auth refresh check finished");
-    } else {
-        crate::diagnostics::log("usage", "startup auth refresh check failed");
-    }
-}
-
 pub fn start_fetch_if_due(force: bool) {
     if crate::app::is_workstation_locked() {
         crate::diagnostics::log("usage", "fetch skipped workstation locked");
@@ -178,7 +162,7 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
         }
     };
 
-    let Some(token) = credentials::read_claude_token() else {
+    let Some(token) = credentials::refresh_claude_token_if_due(&agent) else {
         snapshot.status = "no token".to_owned();
         snapshot.ok = false;
         crate::diagnostics::log("usage", "query stopped no token");
@@ -189,7 +173,21 @@ fn query_claude_usage(snapshot: &mut UsageSnapshot) -> bool {
         format!("token loaded token_chars={}", token.chars().count()),
     );
 
-    let response = match send_usage_request(&agent, &token) {
+    let first_response = send_usage_request(&agent, &token);
+    let response = if matches!(first_response, UsageResponse::AuthRejected) {
+        crate::diagnostics::log(
+            "usage",
+            "authentication rejected; forcing token refresh before retry",
+        );
+        match credentials::force_refresh_claude_token(&agent) {
+            Some(refreshed_token) => send_usage_request(&agent, &refreshed_token),
+            None => UsageResponse::AuthRejected,
+        }
+    } else {
+        first_response
+    };
+
+    let response = match response {
         UsageResponse::Ok(response) => response,
         UsageResponse::RateLimited(response) => {
             apply_rate_limit_snapshot(snapshot, &response);
